@@ -14,7 +14,7 @@ pub fn watch(src_dir: &Path, index_dir: &Path, ext: &str) -> Result<()> {
     let debounce_ms = std::env::var("SPLIT_DEBOUNCE_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(500);
+        .unwrap_or(120_000);
     watch_with_debounce(src_dir, index_dir, ext, Duration::from_millis(debounce_ms))
 }
 

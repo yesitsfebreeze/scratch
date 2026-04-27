@@ -76,7 +76,7 @@ The watcher debounces before stitching `.fs` edits back to `.rs`. The source fil
 
 Without debounce, the `.rs` file would contain partial/invalid code mid-edit, causing the language server to report false errors. With debounce, the `.rs` file is always updated with complete, syntactically valid code. LSP stays clean.
 
-Configure debounce via `SPLIT_DEBOUNCE_MS` (default: `500`).
+Configure debounce via `SPLIT_DEBOUNCE_MS` (default: `120000` — 2 minutes). The long default ensures the source file is only reconstructed once a complete implementation is written, not after each individual function edit.
 
 ## Language support
 
