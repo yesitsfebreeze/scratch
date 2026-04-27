@@ -9,9 +9,16 @@ use std::sync::mpsc;
 use crate::{splitter, stitcher};
 
 type Written = Arc<Mutex<HashMap<PathBuf, Instant>>>;
-const DEBOUNCE: Duration = Duration::from_millis(500);
 
 pub fn watch(src_dir: &Path, index_dir: &Path, ext: &str) -> Result<()> {
+    let debounce_ms = std::env::var("SPLIT_DEBOUNCE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(500);
+    watch_with_debounce(src_dir, index_dir, ext, Duration::from_millis(debounce_ms))
+}
+
+pub fn watch_with_debounce(src_dir: &Path, index_dir: &Path, ext: &str, debounce: Duration) -> Result<()> {
     let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
     let mut watcher = RecommendedWatcher::new(move |res| { let _ = tx.send(res); }, Config::default())?;
     watcher.watch(index_dir, RecursiveMode::Recursive)?;
@@ -21,14 +28,14 @@ pub fn watch(src_dir: &Path, index_dir: &Path, ext: &str) -> Result<()> {
     let index_dir = index_dir.to_path_buf();
     let src_ext = ext.to_string();
 
-    eprintln!("split: watching {} <-> {} (*.{}) ...", src_dir.display(), index_dir.display(), src_ext);
+    eprintln!("split: watching {} <-> {} (*.{}, debounce {}ms) ...", src_dir.display(), index_dir.display(), src_ext, debounce.as_millis());
 
     for res in rx {
         match res {
             Ok(event) if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) => {
                 {
                     let mut w = written.lock().unwrap();
-                    w.retain(|_, t| t.elapsed() < DEBOUNCE);
+                    w.retain(|_, t| t.elapsed() < debounce);
                 }
                 for path in event.paths {
                     if written.lock().unwrap().contains_key(&path) {

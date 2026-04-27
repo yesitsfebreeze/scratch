@@ -72,9 +72,11 @@ Add `.index/` to `.gitignore` — it's generated, not source of truth.
 
 ## LSP compatibility
 
-The watcher has a 500ms debounce before stitching `.fs` edits back to `.rs`. This means the source file only gets rewritten when you stop typing — not on every keystroke.
+The watcher debounces before stitching `.fs` edits back to `.rs`. The source file is only rewritten once writes settle — not on every intermediate change.
 
-Without debounce, the `.rs` file would contain partial/invalid code during editing, causing the language server to report false errors constantly. With debounce, the `.rs` file is always updated with complete, syntactically valid code. LSP stays clean.
+Without debounce, the `.rs` file would contain partial/invalid code mid-edit, causing the language server to report false errors. With debounce, the `.rs` file is always updated with complete, syntactically valid code. LSP stays clean.
+
+Configure debounce via `SPLIT_DEBOUNCE_MS` (default: `500`).
 
 ## Language support
 

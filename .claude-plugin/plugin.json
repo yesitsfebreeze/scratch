@@ -24,7 +24,8 @@
       "env": {
         "SPLIT_EXT": "rs",
         "SPLIT_INDEX_DIR": ".index",
-        "SPLIT_SRC_DIR": "src"
+        "SPLIT_SRC_DIR": "src",
+        "SPLIT_DEBOUNCE_MS": "500"
       }
     }
   },
