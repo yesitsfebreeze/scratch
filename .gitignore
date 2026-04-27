@@ -1,1 +1,2 @@
-target/\n.index/
+target/
+.index/
