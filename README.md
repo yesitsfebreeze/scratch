@@ -70,6 +70,12 @@ index_dir(src_dir="src", index_dir=".index")
 
 Add `.index/` to `.gitignore` — it's generated, not source of truth.
 
+## LSP compatibility
+
+The watcher has a 500ms debounce before stitching `.fs` edits back to `.rs`. This means the source file only gets rewritten when you stop typing — not on every keystroke.
+
+Without debounce, the `.rs` file would contain partial/invalid code during editing, causing the language server to report false errors constantly. With debounce, the `.rs` file is always updated with complete, syntactically valid code. LSP stays clean.
+
 ## Language support
 
 `SPLIT_EXT=rs` — Rust: full fn-level splitting via built-in parser.
