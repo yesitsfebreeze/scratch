@@ -45,18 +45,27 @@ data/schema.json       →   .split/data/schema.skel.json        (structure)
 | `list_bodies` | 📋 List functions in a directory, sorted by size |
 | `find_large` | ⚠️ Find functions exceeding `SPLIT_MAX_LOC` lines |
 
-## 🏗️ Building
+
+
+## 💿 Install
+
+### Terminal
+
+```bash
+claude marketplace add yesitsfebreeze/split
+claude plugin install split@yesitsfebreeze
+```
 
 ### Inside Claude
 
 ```bash
-claude marketplace add yesitsfebreeze
-claude plugin install split@yesitsfebreeze
+/plugin marketplace add yesitsfebreeze/split
+/plugin install split@yesitsfebreeze
 ```
 
 Done. MCP server + skill installed automatically.
 
-### Outside Claude
+## 🏗️ Building
 
 Requires Rust and the WASM target:
 ```bash
