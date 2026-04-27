@@ -44,26 +44,25 @@ data/schema.json       →   .split/data/schema.skel.json        (structure)
 | `search_bodies` | Grep across all indexed functions |
 | `list_bodies` | List functions in a directory, sorted by size |
 
-## Setup
+## Building
 
-**1. Install:**
+### Inside Claude
+
 ```bash
-# from crates.io (once published)
-cargo install split
-
-# or from source
-cargo install --git https://github.com/yesitsfebreeze/split
-
-# or local build
-cargo install --path .
+claude plugin install yesitsfebreeze/split
 ```
 
-Requires the WASM target for the built-in Rust plugin:
+Done. MCP server + skill installed automatically.
+
+### Outside Claude
+
+Requires Rust and the WASM target:
 ```bash
 rustup target add wasm32-wasip1
+cargo install --git https://github.com/yesitsfebreeze/split
 ```
 
-**2. Add to `.mcp.json`:**
+Then wire it up manually. Add to `.mcp.json`:
 ```json
 {
   "mcpServers": {
@@ -80,12 +79,12 @@ rustup target add wasm32-wasip1
 }
 ```
 
-**3. Bootstrap the index once:**
+Bootstrap the index once:
 ```
 index_dir(src_dir="src", index_dir=".split")
 ```
 
-**4. Add to `.gitignore`:**
+Add to `.gitignore`:
 ```
 .split/
 ```
