@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 struct Input {
     source: String,
     source_path: String,
-    index_dir: String,
+    split_dir: String,
 }
 
 #[derive(serde::Serialize)]
@@ -58,12 +58,12 @@ fn do_split(input: &[u8]) -> Vec<u8> {
         return b"{}".to_vec();
     };
     let source_path = Path::new(&inp.source_path);
-    let index_dir = Path::new(&inp.index_dir);
-    let out = split_rs(&inp.source, source_path, index_dir);
+    let split_dir = Path::new(&inp.split_dir);
+    let out = split_rs(&inp.source, source_path, split_dir);
     serde_json::to_vec(&out).unwrap_or_default()
 }
 
-fn split_rs(source: &str, source_path: &Path, index_dir: &Path) -> Output {
+fn split_rs(source: &str, source_path: &Path, split_dir: &Path) -> Output {
     let src_display = to_slash(source_path);
     let funcs = find_fns(source);
 
@@ -74,8 +74,8 @@ fn split_rs(source: &str, source_path: &Path, index_dir: &Path) -> Output {
     let mut offset: i64 = header_len;
 
     for f in funcs {
-        let raw_body = source[f.body_start..f.body_end].trim().to_string();
-        let body_dir = index_dir.join(source_path.with_extension(""));
+        let raw_body = strip_body_edges(&source[f.body_start..f.body_end]);
+        let body_dir = split_dir.join(source_path.with_extension(""));
         let body_path = body_dir.join(format!("{}.fs", f.name));
         let body_path_slash = to_slash(&body_path);
 
@@ -90,10 +90,18 @@ fn split_rs(source: &str, source_path: &Path, index_dir: &Path) -> Output {
         skeleton.replace_range(a..b, &ref_text);
         offset += ref_text.len() as i64 - (f.body_end - f.body_start) as i64;
 
-        bodies.push(Body { path: body_path_slash, content: body_content });
+        bodies.push(Body {
+            path: body_path_slash,
+            content: body_content,
+        });
     }
 
     Output { skeleton, bodies }
+}
+
+fn strip_body_edges(s: &str) -> String {
+    let s = s.strip_prefix("\r\n").or_else(|| s.strip_prefix('\n')).unwrap_or(s);
+    s.trim_end().to_string()
 }
 
 fn to_slash(p: &Path) -> String {
@@ -113,12 +121,16 @@ fn find_fns(source: &str) -> Vec<FnLoc> {
 
     while i < bytes.len() {
         if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'/' {
-            while i < bytes.len() && bytes[i] != b'\n' { i += 1; }
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
             continue;
         }
         if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
             i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') { i += 1; }
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
             i += 2;
             continue;
         }
@@ -126,8 +138,12 @@ fn find_fns(source: &str) -> Vec<FnLoc> {
             i = skip_string(bytes, i + 1);
             continue;
         }
-        if bytes[i] == b'r' && i + 1 < bytes.len() && (bytes[i + 1] == b'#' || bytes[i + 1] == b'"') {
-            if let Some(j) = skip_raw_string(bytes, i) { i = j; continue; }
+        if bytes[i] == b'r' && i + 1 < bytes.len() && (bytes[i + 1] == b'#' || bytes[i + 1] == b'"')
+        {
+            if let Some(j) = skip_raw_string(bytes, i) {
+                i = j;
+                continue;
+            }
         }
         if i + 2 <= bytes.len() && &bytes[i..i + 2] == b"fn" {
             let pre_ok = i == 0 || !is_ident_char(bytes[i - 1]);
@@ -139,7 +155,11 @@ fn find_fns(source: &str) -> Vec<FnLoc> {
                     let name = String::from_utf8_lossy(&bytes[name_start..name_end]).to_string();
                     if let Some(open) = find_open_brace(bytes, name_end) {
                         if let Some(close) = find_close_brace(bytes, open) {
-                            result.push(FnLoc { name, body_start: open + 1, body_end: close });
+                            result.push(FnLoc {
+                                name,
+                                body_start: open + 1,
+                                body_end: close,
+                            });
                             i = close + 1;
                             continue;
                         }
@@ -159,11 +179,15 @@ fn find_open_brace(bytes: &[u8], from: usize) -> Option<usize> {
     while i < bytes.len() {
         match bytes[i] {
             b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
-                while i < bytes.len() && bytes[i] != b'\n' { i += 1; }
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
             }
             b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
                 i += 2;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') { i += 1; }
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
                 i += 2;
                 continue;
             }
@@ -186,24 +210,36 @@ fn find_close_brace(bytes: &[u8], open: usize) -> Option<usize> {
     while i < bytes.len() {
         match bytes[i] {
             b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
-                while i < bytes.len() && bytes[i] != b'\n' { i += 1; }
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
                 continue;
             }
             b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
                 i += 2;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') { i += 1; }
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
                 i += 2;
                 continue;
             }
-            b'"' => { i = skip_string(bytes, i + 1); continue; }
+            b'"' => {
+                i = skip_string(bytes, i + 1);
+                continue;
+            }
             b'r' if i + 1 < bytes.len() && (bytes[i + 1] == b'#' || bytes[i + 1] == b'"') => {
-                if let Some(j) = skip_raw_string(bytes, i) { i = j; continue; }
+                if let Some(j) = skip_raw_string(bytes, i) {
+                    i = j;
+                    continue;
+                }
             }
             b'\'' if i + 2 < bytes.len() => {
                 let next = bytes[i + 1];
                 if next == b'\\' {
                     i += 3;
-                    if i < bytes.len() && bytes[i] == b'\'' { i += 1; }
+                    if i < bytes.len() && bytes[i] == b'\'' {
+                        i += 1;
+                    }
                     continue;
                 } else if i + 2 < bytes.len() && bytes[i + 2] == b'\'' {
                     i += 3;
@@ -213,7 +249,9 @@ fn find_close_brace(bytes: &[u8], open: usize) -> Option<usize> {
             b'{' => depth += 1,
             b'}' => {
                 depth -= 1;
-                if depth == 0 { return Some(i); }
+                if depth == 0 {
+                    return Some(i);
+                }
             }
             _ => {}
         }
@@ -224,8 +262,13 @@ fn find_close_brace(bytes: &[u8], open: usize) -> Option<usize> {
 
 fn skip_string(bytes: &[u8], mut i: usize) -> usize {
     while i < bytes.len() {
-        if bytes[i] == b'\\' { i += 2; continue; }
-        if bytes[i] == b'"' { return i + 1; }
+        if bytes[i] == b'\\' {
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            return i + 1;
+        }
         i += 1;
     }
     i
@@ -234,32 +277,51 @@ fn skip_string(bytes: &[u8], mut i: usize) -> usize {
 fn skip_raw_string(bytes: &[u8], start: usize) -> Option<usize> {
     let mut i = start + 1;
     let h0 = i;
-    while i < bytes.len() && bytes[i] == b'#' { i += 1; }
+    while i < bytes.len() && bytes[i] == b'#' {
+        i += 1;
+    }
     let hashes = i - h0;
-    if i >= bytes.len() || bytes[i] != b'"' { return None; }
+    if i >= bytes.len() || bytes[i] != b'"' {
+        return None;
+    }
     i += 1;
     loop {
-        if i >= bytes.len() { return Some(i); }
+        if i >= bytes.len() {
+            return Some(i);
+        }
         if bytes[i] == b'"' {
             let mut j = i + 1;
             let mut count = 0;
-            while j < bytes.len() && bytes[j] == b'#' { count += 1; j += 1; }
-            if count >= hashes { return Some(j); }
+            while j < bytes.len() && bytes[j] == b'#' {
+                count += 1;
+                j += 1;
+            }
+            if count >= hashes {
+                return Some(j);
+            }
         }
         i += 1;
     }
 }
 
 fn skip_ws(bytes: &[u8], mut i: usize) -> usize {
-    while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r') { i += 1; }
+    while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r') {
+        i += 1;
+    }
     i
 }
 
-fn is_ident_char(b: u8) -> bool { b.is_ascii_alphanumeric() || b == b'_' }
-fn is_ident_start(b: u8) -> bool { b.is_ascii_alphabetic() || b == b'_' }
+fn is_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+fn is_ident_start(b: u8) -> bool {
+    b.is_ascii_alphabetic() || b == b'_'
+}
 
 fn ident_end(bytes: &[u8], start: usize) -> usize {
     let mut i = start;
-    while i < bytes.len() && is_ident_char(bytes[i]) { i += 1; }
+    while i < bytes.len() && is_ident_char(bytes[i]) {
+        i += 1;
+    }
     i
 }

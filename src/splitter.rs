@@ -47,7 +47,7 @@ pub fn split(source_path: &Path, impl_dir: &Path) -> Result<(String, Vec<BodyFil
     let mut offset: i64 = header_len;
 
     for f in funcs {
-        let raw_body = source[f.body_start..f.body_end].trim().to_string();
+        let raw_body = strip_body_edges(&source[f.body_start..f.body_end]);
         let body_dir = impl_dir.join(source_path.with_extension(""));
         let body_path = body_dir.join(format!("{}.fs", f.name));
         let body_path_slash = to_slash(&body_path);
@@ -255,6 +255,11 @@ fn ident_end(bytes: &[u8], start: usize) -> usize {
     let mut i = start;
     while i < bytes.len() && is_ident_char(bytes[i]) { i += 1; }
     i
+}
+
+fn strip_body_edges(s: &str) -> String {
+    let s = s.strip_prefix("\r\n").or_else(|| s.strip_prefix('\n')).unwrap_or(s);
+    s.trim_end().to_string()
 }
 
 pub fn to_slash(p: &Path) -> String {
