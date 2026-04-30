@@ -136,8 +136,13 @@ plugin_split(ptr: i32, len: i32) -> i32
 plugin_result_ptr() -> i32
 ```
 
-## 🌐 Language support
+## 🧱 Built-in plugins
 
-`SPLIT_EXT=rs` — Rust: full fn-level splitting via built-in WASM plugin.
+Each plugin declares its own comment marker and produces a `.skel.<ext>` skeleton matching the source extension.
 
-Any other extension — whole file stored as one body. Index + search + watch still work; just no fn-level decomposition. Drop a `.wasm` plugin to add fn-level support for any language.
+| Plugin | Ext | Comment | Extracts |
+|---|---|---|---|
+| `rs` | `.rs` | `//` | `fn` items (free + impl methods) |
+| `py` | `.py` | `#` | `def` / `async def` + class methods (qualified `Class.method`) |
+
+Any other extension — whole file stored as one body. Index + search + watch still work; just no fn-level decomposition. Drop a `.wasm` plugin into `.split/plugins/{ext}.wasm` to add fn-level support for any language.
