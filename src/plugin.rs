@@ -144,14 +144,16 @@ pub fn load_meta(wasm: &[u8]) -> Result<Meta> {
 
 pub fn split(
     wasm: &[u8],
+    ext: &str,
     source_path: &Path,
     index_dir: &Path,
 ) -> Result<(String, Vec<BodyFile>)> {
     let source = std::fs::read_to_string(source_path)?;
+    let src_display = crate::splitter::to_slash(source_path);
 
     let input = serde_json::json!({
         "source": source,
-        "source_path": crate::splitter::to_slash(source_path),
+        "source_path": src_display,
         "index_dir": crate::splitter::to_slash(index_dir),
     });
     let input_str = serde_json::to_string(&input)?;
@@ -161,11 +163,21 @@ pub fn split(
     #[derive(serde::Deserialize)]
     struct Resp { skeleton: String, bodies: Vec<RespBody> }
     #[derive(serde::Deserialize)]
-    struct RespBody { path: String, content: String }
+    struct RespBody {
+        path: String,
+        name: String,
+        raw: String,
+        line_start: usize,
+        line_end: usize,
+    }
 
     let resp: Resp = serde_json::from_slice(&out)?;
+    let comment = meta_for_ext(ext).comment;
     let bodies = resp.bodies.into_iter()
-        .map(|b| BodyFile { path: PathBuf::from(b.path), content: b.content })
+        .map(|b| BodyFile {
+            path: PathBuf::from(b.path),
+            content: crate::splitter::wrap_body(&comment, &src_display, &b.name, &b.raw, b.line_start, b.line_end),
+        })
         .collect();
 
     Ok((resp.skeleton, bodies))

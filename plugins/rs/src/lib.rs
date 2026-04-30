@@ -30,7 +30,10 @@ struct Output {
 #[derive(serde::Serialize)]
 struct Body {
     path: String,
-    content: String,
+    name: String,
+    raw: String,
+    line_start: usize,
+    line_end: usize,
 }
 
 static mut OUT: Vec<u8> = Vec::new();
@@ -92,10 +95,8 @@ fn split_rs(source: &str, source_path: &Path, index_dir: &Path) -> Output {
         let body_path = body_dir.join(format!("{}.fs", f.name));
         let body_path_slash = to_slash(&body_path);
 
-        let body_content = format!(
-            "// §head {} {}\n{}\n// §foot {} {}",
-            src_display, f.name, raw_body, src_display, f.name
-        );
+        let line_start = line_of(source, f.decl_start);
+        let line_end = line_of(source, f.body_close);
 
         let ref_text = format!("\n    // §{}\n", body_path_slash);
         let a = (f.body_start as i64 + offset) as usize;
@@ -105,11 +106,19 @@ fn split_rs(source: &str, source_path: &Path, index_dir: &Path) -> Output {
 
         bodies.push(Body {
             path: body_path_slash,
-            content: body_content,
+            name: f.name,
+            raw: raw_body,
+            line_start,
+            line_end,
         });
     }
 
     Output { skeleton, bodies }
+}
+
+fn line_of(source: &str, byte_offset: usize) -> usize {
+    let end = byte_offset.min(source.len());
+    source.as_bytes()[..end].iter().filter(|&&b| b == b'\n').count() + 1
 }
 
 fn strip_body_edges(s: &str) -> String {
@@ -123,8 +132,10 @@ fn to_slash(p: &Path) -> String {
 
 struct FnLoc {
     name: String,
+    decl_start: usize,
     body_start: usize,
     body_end: usize,
+    body_close: usize,
 }
 
 fn find_fns(source: &str) -> Vec<FnLoc> {
@@ -170,8 +181,10 @@ fn find_fns(source: &str) -> Vec<FnLoc> {
                         if let Some(close) = find_close_brace(bytes, open) {
                             result.push(FnLoc {
                                 name,
+                                decl_start: i,
                                 body_start: open + 1,
                                 body_end: close,
+                                body_close: close,
                             });
                             i = close + 1;
                             continue;

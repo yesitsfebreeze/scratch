@@ -18,7 +18,10 @@ struct Output {
 #[derive(serde::Serialize)]
 struct Body {
     path: String,
-    content: String,
+    name: String,
+    raw: String,
+    line_start: usize,
+    line_end: usize,
 }
 
 static META_JSON: &[u8] = b"{\"comment\":\"#\"}";
@@ -91,11 +94,6 @@ fn split_py(source: &str, source_path: &Path, index_dir: &Path) -> Output {
         let body_path = body_dir.join(format!("{}.fs", f.name));
         let body_path_slash = to_slash(&body_path);
 
-        let body_content = format!(
-            "# §head {} {}\n{}\n# §foot {} {}",
-            src_display, f.name, raw_body, src_display, f.name
-        );
-
         let indent_str = " ".repeat(f.body_indent);
         let ref_text = format!("{indent_str}# §{body_path_slash}\n");
         let a = (f.body_start as i64 + offset) as usize;
@@ -105,11 +103,18 @@ fn split_py(source: &str, source_path: &Path, index_dir: &Path) -> Output {
 
         bodies.push(Body {
             path: body_path_slash,
-            content: body_content,
+            name: f.name,
+            raw: raw_body,
+            line_start: f.line_start,
+            line_end: f.line_end,
         });
     }
 
     Output { skeleton, bodies }
+}
+
+fn line_of(line_starts: &[usize], byte_offset: usize) -> usize {
+    line_index_at(line_starts, byte_offset) + 1
 }
 
 fn strip_body_edges(s: &str) -> String {
@@ -126,6 +131,8 @@ struct DefLoc {
     body_start: usize,
     body_end: usize,
     body_indent: usize,
+    line_start: usize,
+    line_end: usize,
 }
 
 #[derive(Clone)]
@@ -183,11 +190,15 @@ fn find_defs(source: &str) -> Vec<DefLoc> {
             };
 
             if parsed.is_def && !nested_in_def && body_end > body_block_start {
+                let ls = i + 1;
+                let le = line_of(&line_starts, body_end.saturating_sub(1));
                 result.push(DefLoc {
                     name: qualified,
                     body_start: body_block_start,
                     body_end,
                     body_indent,
+                    line_start: ls,
+                    line_end: le,
                 });
             }
 

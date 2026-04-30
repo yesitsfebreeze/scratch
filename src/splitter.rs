@@ -6,9 +6,23 @@ pub struct BodyFile {
     pub content: String,
 }
 
+pub fn wrap_body(
+    comment: &str,
+    src_display: &str,
+    name: &str,
+    raw: &str,
+    line_start: usize,
+    line_end: usize,
+) -> String {
+    format!(
+        "{c} §head {src}:{ls}-{le} {n}\n{raw}\n{c} §foot {src} {n}",
+        c = comment, src = src_display, ls = line_start, le = line_end, n = name, raw = raw
+    )
+}
+
 pub fn split_for_ext(source_path: &Path, index_dir: &Path, ext: &str) -> Result<(String, Vec<BodyFile>)> {
     if let Some(wasm) = crate::plugin::load(ext) {
-        if let Ok(result) = crate::plugin::split(&wasm, source_path, index_dir) {
+        if let Ok(result) = crate::plugin::split(&wasm, ext, source_path, index_dir) {
             return Ok(result);
         }
     }
@@ -31,13 +45,8 @@ pub fn split_generic(source_path: &Path, index_dir: &Path) -> Result<(String, Ve
     let body_dir = index_dir.join(source_path.with_extension(""));
     let body_path = body_dir.join("_body.fs");
     let body_path_slash = to_slash(&body_path);
-    let body_content = format!(
-        "{c} §head {} _body\n{}\n{c} §foot {} _body",
-        src_display,
-        source.trim_end(),
-        src_display,
-        c = comment
-    );
+    let total_lines = source.lines().count().max(1);
+    let body_content = wrap_body(&comment, &src_display, "_body", source.trim_end(), 1, total_lines);
     let skeleton = format!("{c} §source {src_display}\n{c} §{body_path_slash}\n", c = comment);
     Ok((skeleton, vec![BodyFile { path: body_path, content: body_content }]))
 }
@@ -48,6 +57,7 @@ pub fn split(source_path: &Path, impl_dir: &Path) -> Result<(String, Vec<BodyFil
 
     let src_display = to_slash(source_path);
     let funcs = find_fns(&source);
+    let comment = "//";
 
     let header = format!("// §source {src_display}\n");
     let header_len = header.len() as i64;
@@ -61,10 +71,9 @@ pub fn split(source_path: &Path, impl_dir: &Path) -> Result<(String, Vec<BodyFil
         let body_path = body_dir.join(format!("{}.fs", f.name));
         let body_path_slash = to_slash(&body_path);
 
-        let body_content = format!(
-            "// §head {} {}\n{}\n// §foot {} {}",
-            src_display, f.name, raw_body, src_display, f.name
-        );
+        let line_start = line_of(&source, f.decl_start);
+        let line_end = line_of(&source, f.body_close);
+        let body_content = wrap_body(comment, &src_display, &f.name, &raw_body, line_start, line_end);
 
         let ref_text = format!("\n    // §{}\n", body_path_slash);
         let a = (f.body_start as i64 + offset) as usize;
@@ -78,10 +87,17 @@ pub fn split(source_path: &Path, impl_dir: &Path) -> Result<(String, Vec<BodyFil
     Ok((skeleton, bodies))
 }
 
+fn line_of(source: &str, byte_offset: usize) -> usize {
+    let end = byte_offset.min(source.len());
+    source.as_bytes()[..end].iter().filter(|&&b| b == b'\n').count() + 1
+}
+
 struct FnLoc {
     name: String,
+    decl_start: usize,
     body_start: usize,
     body_end: usize,
+    body_close: usize,
 }
 
 fn find_fns(source: &str) -> Vec<FnLoc> {
@@ -133,8 +149,10 @@ fn find_fns(source: &str) -> Vec<FnLoc> {
                         if let Some(close) = find_close_brace(bytes, open) {
                             result.push(FnLoc {
                                 name,
+                                decl_start: i,
                                 body_start: open + 1,
                                 body_end: close,
+                                body_close: close,
                             });
                             i = close + 1;
                             continue;
