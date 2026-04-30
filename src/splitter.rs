@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub struct BodyFile {
     pub path: PathBuf,
@@ -36,13 +36,14 @@ pub fn split_for_ext(source_path: &Path, index_dir: &Path, ext: &str) -> Result<
 pub fn split_generic(source_path: &Path, index_dir: &Path) -> Result<(String, Vec<BodyFile>)> {
     let source = std::fs::read_to_string(source_path)
         .with_context(|| format!("read {}", source_path.display()))?;
+    let source_key = source_key_path(source_path);
     let ext = source_path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
     let comment = crate::language::meta_for_ext(ext).comment;
-    let src_display = to_slash(source_path);
-    let body_dir = index_dir.join(source_path.with_extension(""));
+    let src_display = to_slash(&source_key);
+    let body_dir = index_dir.join(source_key.with_extension(""));
     let body_path = body_dir.join("_body.fs");
     let body_path_slash = to_slash(&body_path);
     let total_lines = source.lines().count().max(1);
@@ -54,8 +55,9 @@ pub fn split_generic(source_path: &Path, index_dir: &Path) -> Result<(String, Ve
 pub fn split(source_path: &Path, impl_dir: &Path) -> Result<(String, Vec<BodyFile>)> {
     let source = std::fs::read_to_string(source_path)
         .with_context(|| format!("read {}", source_path.display()))?;
+    let source_key = source_key_path(source_path);
 
-    let src_display = to_slash(source_path);
+    let src_display = to_slash(&source_key);
     let funcs = find_fns(&source);
     let comment = "//";
 
@@ -67,7 +69,7 @@ pub fn split(source_path: &Path, impl_dir: &Path) -> Result<(String, Vec<BodyFil
 
     for f in funcs {
         let raw_body = strip_body_edges(&source[f.body_start..f.body_end]);
-        let body_dir = impl_dir.join(source_path.with_extension(""));
+        let body_dir = impl_dir.join(source_key.with_extension(""));
         let body_path = body_dir.join(format!("{}.fs", f.name));
         let body_path_slash = to_slash(&body_path);
 
@@ -294,8 +296,41 @@ pub fn to_slash(p: &Path) -> String {
 }
 
 pub fn skeleton_path(src: &Path, index_dir: &Path) -> PathBuf {
+    let source_key = source_key_path(src);
     let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("rs");
-    index_dir.join(src.with_extension(format!("skel.{ext}")))
+    index_dir.join(source_key.with_extension(format!("skel.{ext}")))
+}
+
+pub fn source_key_path(source_path: &Path) -> PathBuf {
+    if !source_path.is_absolute() {
+        return source_path.to_path_buf();
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Ok(rel) = source_path.strip_prefix(&cwd) {
+            return rel.to_path_buf();
+        }
+    }
+
+    let mut key = PathBuf::new();
+    for comp in source_path.components() {
+        match comp {
+            Component::Normal(seg) => key.push(seg),
+            Component::Prefix(prefix) => {
+                let mut drive = prefix.as_os_str().to_string_lossy().to_string();
+                drive.retain(|c| c != ':' && c != '\\' && c != '/');
+                if !drive.is_empty() {
+                    key.push(drive);
+                }
+            }
+            Component::RootDir | Component::CurDir | Component::ParentDir => {}
+        }
+    }
+    if key.as_os_str().is_empty() {
+        source_path.to_path_buf()
+    } else {
+        key
+    }
 }
 
 const MARKER: char = '§';

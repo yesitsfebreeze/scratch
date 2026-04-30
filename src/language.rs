@@ -149,7 +149,8 @@ pub fn split(
     index_dir: &Path,
 ) -> Result<(String, Vec<BodyFile>)> {
     let source = std::fs::read_to_string(source_path)?;
-    let src_display = crate::splitter::to_slash(source_path);
+    let source_key = crate::splitter::source_key_path(source_path);
+    let src_display = crate::splitter::to_slash(&source_key);
 
     let input = serde_json::json!({
         "source": source,
