@@ -32,7 +32,7 @@ data/schema.json       →   .split/data/schema.skel.json        (structure)
 ```
 
 - **Skeleton** = imports, struct definitions, fn signatures with `// §ref` placeholders
-- **Body files** = one `.fs` file per function
+- **Body files** = one `.fs` file per function. First line carries the source path + line range, e.g. `// §head src/config/parser.rs:42-89 parse` — jump straight from body to source line.
 - **Watcher** = one-way: source change → re-split. `.fs` files are read-only for agents; edit the source instead.
 
 ## 🛠️ Tools

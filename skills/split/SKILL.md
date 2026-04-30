@@ -35,9 +35,9 @@ Multi-language via WASM. Builtins: `rs`, `py`. Add more by dropping `.wasm` into
 - `search_bodies("symbol_name")` — grep across all indexed fns
 
 ### Edit
-1. `read_body` to load the fn into context
-2. `Edit` (or `Write`) on the original source file
-3. Watcher re-splits automatically
+1. `read_body` — first line shows `§head <src>:<start>-<end> <name>` with exact source line range
+2. `Edit` (or `Write`) on the original source file using that range
+3. Watcher re-splits automatically (line range may be stale during debounce window)
 
 ### Bootstrap
 If `.split/` is empty:
