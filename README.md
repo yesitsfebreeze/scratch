@@ -49,7 +49,9 @@ src/parser.rs  →  .scratch/src/parser.skel.rs     skeleton (bodies replaced by
 | `index_dir(src_dir)` | Bootstrap: split a whole tree (skips hidden / build / vendor dirs) |
 | `open_source(path)` | Function list (with signatures) by size + the file's scratch note |
 | `read_body(path)` | One function body |
-| `search_bodies(query)` | Grep across all functions; hits map back to `source:line [fn]` |
+| `search_bodies(query)` | Ripgrep across all functions; hits map back to `source:line [fn]` |
+| `grep_files(query)` | Ripgrep raw source under a root; hits attributed to the owning fn — finds even unindexed files |
+| `search_names(query)` | Ripgrep over function names + source paths (not content); returns paths, token-cheap |
 | `ref_graph(path)` | Call graph: callers (`in`) + callees (`out`) for a fn name or `.fs` body |
 | `list_bodies(dir)` | Functions in a dir, by size |
 | `find_large()` | Functions over `SCRATCH_MAX_LOC` |
@@ -57,6 +59,8 @@ src/parser.rs  →  .scratch/src/parser.skel.rs     skeleton (bodies replaced by
 | `list_languages()` | Installed languages |
 
 Also: `split`, `dry_run_split`, `grep_source`, `validate`, `body_stats`, `diff_body`, `outline`.
+
+Search is powered by ripgrep's own crates (`grep` + `rayon`), run in parallel across the index — same matcher quality as `rg`, with scratch's fn-level attribution on top.
 
 ## Config
 

@@ -1,9 +1,10 @@
 use anyhow::{anyhow, Result};
+use grep::regex::RegexMatcher;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use crate::{language, splitter};
+use crate::{language, search, splitter};
 
 pub fn list() -> Value {
     json!([
@@ -181,6 +182,37 @@ pub fn list() -> Value {
             }
         },
         {
+            "name": "search_names",
+            "description": "Search the index by name: regex/substring over function names and source paths (not file contents). Token-cheap — returns matching paths to hand to read_body/outline, not bodies.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query":  { "type": "string" },
+                    "regex":  { "type": "boolean" },
+                    "scope":  { "type": "string", "enum": ["all", "skel", "body"], "description": "default: all" },
+                    "cursor": { "type": "number" },
+                    "limit":  { "type": "number" }
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "grep_files",
+            "description": "Ripgrep raw source files under a root (same exclusions as the indexer), attributing each hit to its owning function when indexed. Finds matches even in files not yet split into the index.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query":  { "type": "string" },
+                    "regex":  { "type": "boolean" },
+                    "root":   { "type": "string", "description": "Root dir to walk (default: .)" },
+                    "ext":    { "type": "string", "description": "File extension (default: rs)" },
+                    "cursor": { "type": "number" },
+                    "limit":  { "type": "number" }
+                },
+                "required": ["query"]
+            }
+        },
+        {
             "name": "read_scratch",
             "description": "Read the persistent scratch note for a source file — agent memory that survives re-splits. Pass the original source path (e.g. src/foo.rs).",
             "inputSchema": {
@@ -223,6 +255,8 @@ pub async fn call(name: &str, args: Value) -> Result<String> {
         "diff_body" => handle_diff_body(args),
         "outline" => handle_outline(args),
         "grep_source" => handle_grep_source(args),
+        "search_names" => handle_search_names(args),
+        "grep_files" => handle_grep_files(args),
         "list_languages" => handle_list_languages(args),
         "read_scratch" => handle_read_scratch(args),
         "write_scratch" => handle_write_scratch(args),
@@ -486,10 +520,9 @@ fn handle_search_bodies(args: Value) -> Result<String> {
     let use_regex = args["regex"].as_bool().unwrap_or(false);
     let cursor = args["cursor"].as_u64().unwrap_or(0) as usize;
     let limit = args["limit"].as_u64().map(|n| n as usize).unwrap_or(100);
-    let matcher = build_matcher(query, use_regex)?;
-    let mut paths = walk_fs_files(&index_dir);
-    paths.sort();
-    let results = grep_paths(&paths, &matcher, true)?;
+    let matcher = search::matcher(query, use_regex)?;
+    let paths = scope_paths(&index_dir, "body");
+    let results = grep_paths(&paths, &matcher, true);
     Ok(format_grep_results(&results, cursor, limit, query))
 }
 
@@ -998,19 +1031,82 @@ fn handle_grep_source(args: Value) -> Result<String> {
     let scope = args["scope"].as_str().unwrap_or("all");
     let cursor = args["cursor"].as_u64().unwrap_or(0) as usize;
     let limit = args["limit"].as_u64().map(|n| n as usize).unwrap_or(100);
-    let matcher = build_matcher(query, use_regex)?;
-    let mut paths: Vec<PathBuf> = Vec::new();
-    match scope {
-        "skel" => paths.extend(walk_skel_files(&index_dir)),
-        "body" => paths.extend(walk_fs_files(&index_dir)),
-        _ => {
-            paths.extend(walk_fs_files(&index_dir));
-            paths.extend(walk_skel_files(&index_dir));
+    let matcher = search::matcher(query, use_regex)?;
+    let paths = scope_paths(&index_dir, scope);
+    let results = grep_paths(&paths, &matcher, true);
+    Ok(format_grep_results(&results, cursor, limit, query))
+}
+
+fn handle_search_names(args: Value) -> Result<String> {
+    let index_dir = index_root();
+    let query = str_arg(&args, "query")?;
+    let use_regex = args["regex"].as_bool().unwrap_or(false);
+    let scope = args["scope"].as_str().unwrap_or("all");
+    let cursor = args["cursor"].as_u64().unwrap_or(0) as usize;
+    let limit = args["limit"].as_u64().map(|n| n as usize).unwrap_or(100);
+    let matcher = search::matcher(query, use_regex)?;
+
+    let paths = scope_paths(&index_dir, scope);
+    let results: Vec<String> = paths
+        .iter()
+        .map(|p| splitter::to_slash(p.strip_prefix(&index_dir).unwrap_or(p)))
+        .filter(|s| search::is_match(&matcher, s))
+        .collect();
+    Ok(format_grep_results(&results, cursor, limit, query))
+}
+
+fn handle_grep_files(args: Value) -> Result<String> {
+    let index_dir = index_root();
+    let root = PathBuf::from(args["root"].as_str().unwrap_or("."));
+    let ext = args["ext"].as_str().unwrap_or("rs");
+    let query = str_arg(&args, "query")?;
+    let use_regex = args["regex"].as_bool().unwrap_or(false);
+    let cursor = args["cursor"].as_u64().unwrap_or(0) as usize;
+    let limit = args["limit"].as_u64().map(|n| n as usize).unwrap_or(100);
+    let matcher = search::matcher(query, use_regex)?;
+
+    let ranges = build_fn_ranges(&index_dir);
+    let mut paths = walk_files(&root, ext);
+    paths.sort();
+
+    let results = par_flat_map(&paths, |path| {
+        let src = norm_rel(path);
+        let fns = ranges.get(&src);
+        search::search_path(&matcher, path)
+            .into_iter()
+            .map(|(lnum, line)| {
+                let owner = fns.and_then(|v| {
+                    v.iter()
+                        .find(|(s, e, _)| lnum as usize >= *s && lnum as usize <= *e)
+                        .map(|(_, _, n)| n.as_str())
+                });
+                match owner {
+                    Some(n) => format!("{src}:{lnum} [{n}]: {line}"),
+                    None => format!("{src}:{lnum}: {line}"),
+                }
+            })
+            .collect()
+    });
+    Ok(format_grep_results(&results, cursor, limit, query))
+}
+
+/// Cwd-relative slash path, dropping a leading `./` so it matches the source
+/// paths recorded in body `§head` markers.
+fn norm_rel(p: &Path) -> String {
+    splitter::to_slash(p).trim_start_matches("./").to_string()
+}
+
+/// source path -> [(start, end, fn name)] from every body's `§head`, so a raw
+/// hit at `src:line` can be attributed to the function whose span contains it.
+fn build_fn_ranges(index_dir: &Path) -> HashMap<String, Vec<(usize, usize, String)>> {
+    let mut map: HashMap<String, Vec<(usize, usize, String)>> = HashMap::new();
+    for body in walk_fs_files(index_dir) {
+        let content = std::fs::read_to_string(&body).unwrap_or_default();
+        if let Some(h) = content.lines().next().and_then(parse_head_line) {
+            map.entry(h.src).or_default().push((h.start, h.end, h.name));
         }
     }
-    paths.sort();
-    let results = grep_paths(&paths, &matcher, true)?;
-    Ok(format_grep_results(&results, cursor, limit, query))
+    map
 }
 
 fn handle_list_languages(_args: Value) -> Result<String> {
@@ -1145,68 +1241,89 @@ fn walk_skel_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-enum Matcher {
-    Substring(String),
-    Regex(regex::Regex),
-}
-
-fn build_matcher(query: &str, use_regex: bool) -> Result<Matcher> {
-    if use_regex {
-        let re = regex::Regex::new(query).map_err(|e| anyhow!("invalid regex: {e}"))?;
-        Ok(Matcher::Regex(re))
+fn grep_one(path: &Path, m: &RegexMatcher, skip_section_markers: bool) -> Vec<String> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let is_body = path.extension().is_some_and(|e| e == "fs");
+    // A body's hits map back to the real source: the k-th code line (markers
+    // §head/§sig/§foot don't exist in the source) is source line `head.start + k`.
+    let head = if is_body {
+        content.lines().next().and_then(parse_head_line)
     } else {
-        Ok(Matcher::Substring(query.to_lowercase()))
-    }
-}
+        None
+    };
+    let name = if is_body {
+        stem_of(path)
+    } else {
+        String::new()
+    };
 
-fn matcher_hits(m: &Matcher, line: &str) -> bool {
-    match m {
-        Matcher::Substring(q) => line.to_lowercase().contains(q),
-        Matcher::Regex(re) => re.is_match(line),
-    }
-}
-
-fn grep_paths(paths: &[PathBuf], m: &Matcher, skip_section_markers: bool) -> Result<Vec<String>> {
-    let mut results = Vec::new();
-    for path in paths {
-        let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let is_body = path.extension().is_some_and(|e| e == "fs");
-        // A body's line `i` (0-based, line 0 is the §head) maps back to source
-        // line `head.start + i`, so a hit points at the real file, not the .fs.
-        let head = if is_body {
-            content.lines().next().and_then(parse_head_line)
-        } else {
-            None
-        };
-        let name = if is_body {
-            stem_of(path)
-        } else {
-            String::new()
-        };
-        // Count code lines only: marker lines (§head/§sig/§foot) don't exist in the
-        // source, so the k-th code line maps to source line `head.start + k`.
+    let lines: Vec<&str> = content.lines().collect();
+    // code_no_at[L] = count of non-marker lines in 1..=L, so a body hit on file
+    // line L resolves to source line head.start + code_no_at[L]. Only bodies map
+    // back to source, so skip the prefix array entirely for skeletons.
+    let code_no_at: Vec<usize> = if head.is_some() {
+        let mut v = Vec::with_capacity(lines.len() + 1);
+        v.push(0usize);
         let mut code_no = 0usize;
-        for (i, line) in content.lines().enumerate() {
-            let marker = splitter::is_marker_line(line);
-            if !marker {
+        for line in &lines {
+            if !splitter::is_marker_line(line) {
                 code_no += 1;
             }
-            if skip_section_markers && marker {
-                continue;
-            }
-            if matcher_hits(m, line) {
-                let entry = match &head {
-                    Some(h) => format!("{}:{} [{}]: {}", h.src, h.start + code_no, name, line),
-                    None => format!("{}:{}: {}", splitter::to_slash(path), i + 1, line),
-                };
-                results.push(entry);
-            }
+            v.push(code_no);
         }
+        v
+    } else {
+        Vec::new()
+    };
+
+    let mut out = Vec::new();
+    for (lnum, line) in search::search_bytes(m, content.as_bytes()) {
+        let li = lnum as usize;
+        let is_marker = li >= 1 && li <= lines.len() && splitter::is_marker_line(lines[li - 1]);
+        if skip_section_markers && is_marker {
+            continue;
+        }
+        let entry = match &head {
+            Some(h) => {
+                let code = code_no_at.get(li).copied().unwrap_or(0);
+                format!("{}:{} [{}]: {}", h.src, h.start + code, name, line)
+            }
+            None => format!("{}:{}: {}", splitter::to_slash(path), li, line),
+        };
+        out.push(entry);
     }
-    Ok(results)
+    out
+}
+
+fn grep_paths(paths: &[PathBuf], m: &RegexMatcher, skip_section_markers: bool) -> Vec<String> {
+    par_flat_map(paths, |p| grep_one(p, m, skip_section_markers))
+}
+
+/// Map `f` over every path in parallel and flatten the per-file line results.
+fn par_flat_map<F>(paths: &[PathBuf], f: F) -> Vec<String>
+where
+    F: Fn(&Path) -> Vec<String> + Sync,
+{
+    use rayon::prelude::*;
+    paths.par_iter().flat_map_iter(|p| f(p)).collect()
+}
+
+/// Index paths for a search scope: `skel`, `body`, or both (default), sorted.
+fn scope_paths(index_dir: &Path, scope: &str) -> Vec<PathBuf> {
+    let mut paths = match scope {
+        "skel" => walk_skel_files(index_dir),
+        "body" => walk_fs_files(index_dir),
+        _ => {
+            let mut p = walk_fs_files(index_dir);
+            p.extend(walk_skel_files(index_dir));
+            p
+        }
+    };
+    paths.sort();
+    paths
 }
 
 fn format_grep_results(results: &[String], cursor: usize, limit: usize, query: &str) -> String {
@@ -1341,6 +1458,8 @@ fn call_name(stem: &str) -> &str {
 struct Head {
     src: String,
     start: usize,
+    end: usize,
+    name: String,
 }
 
 impl Head {
@@ -1349,14 +1468,18 @@ impl Head {
     }
 }
 
+/// Parse a body's `§head src:start-end name` line. `src` is normalized to drop a
+/// leading `./` so it matches walked source paths. Callers take the fields they need.
 fn parse_head_line(line: &str) -> Option<Head> {
-    let rest = splitter::marker_payload(line)?.strip_prefix("head ")?;
-    let (loc, _name) = rest.rsplit_once(' ')?;
+    let rest = splitter::marker_payload(line.trim_end())?.strip_prefix("head ")?;
+    let (loc, name) = rest.rsplit_once(' ')?;
     let (src, span) = loc.rsplit_once(':')?;
-    let start = span.split('-').next()?.trim().parse().ok()?;
+    let (start, end) = span.split_once('-')?;
     Some(Head {
-        src: src.to_string(),
-        start,
+        src: src.trim_start_matches("./").to_string(),
+        start: start.trim().parse().ok()?,
+        end: end.trim().parse().ok()?,
+        name: name.to_string(),
     })
 }
 

@@ -587,6 +587,77 @@ fn search_maps_hits_to_source_file_and_fn() {
 }
 
 #[test]
+fn search_names_matches_fn_and_path_not_content() {
+    let dir = workdir();
+    std::fs::write(
+        dir.join("src/s.rs"),
+        "fn greet() -> i32 {\n    let payload = 1;\n    payload\n}\nfn helper() {}\n",
+    )
+    .unwrap();
+    let out = drive(
+        &dir,
+        &[
+            call(1, "index_dir", serde_json::json!({ "src_dir": "src" })),
+            call(2, "search_names", serde_json::json!({ "query": "greet" })),
+            // `payload` appears in the body content but never as a name.
+            call(3, "search_names", serde_json::json!({ "query": "payload" })),
+        ],
+    );
+    assert!(out[1].contains("greet.fs"), "name hit: {}", out[1]);
+    assert!(
+        !out[1].contains("helper.fs"),
+        "must not over-match: {}",
+        out[1]
+    );
+    assert!(
+        out[2].contains("no matches"),
+        "names are not content: {}",
+        out[2]
+    );
+}
+
+#[test]
+fn grep_files_attributes_and_finds_unindexed() {
+    let dir = workdir();
+    std::fs::write(
+        dir.join("src/a.rs"),
+        "fn one() -> i32 {\n    let needle = 1;\n    needle\n}\n",
+    )
+    .unwrap();
+    // b.rs is written *after* indexing, so it never enters the index — grep_files
+    // must still find it, just without fn attribution.
+    let out = drive(
+        &dir,
+        &[
+            call(1, "index_dir", serde_json::json!({ "src_dir": "src" })),
+            call(
+                2,
+                "grep_files",
+                serde_json::json!({ "query": "needle", "root": "src" }),
+            ),
+        ],
+    );
+    // Indexed hit carries source line + owning fn.
+    assert!(out[1].contains("src/a.rs:2"), "raw source line: {}", out[1]);
+    assert!(out[1].contains("[one]"), "owning fn attributed: {}", out[1]);
+
+    std::fs::write(dir.join("src/b.rs"), "fn two() {\n    let needle = 2;\n}\n").unwrap();
+    let out = drive(
+        &dir,
+        &[call(
+            1,
+            "grep_files",
+            serde_json::json!({ "query": "needle", "root": "src" }),
+        )],
+    );
+    assert!(
+        out[0].contains("src/b.rs:2"),
+        "must find unindexed file: {}",
+        out[0]
+    );
+}
+
+#[test]
 fn index_dir_skips_hidden_dirs() {
     let dir = workdir();
     std::fs::create_dir_all(dir.join("src/.hidden")).unwrap();

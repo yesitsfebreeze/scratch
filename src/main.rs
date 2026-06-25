@@ -5,6 +5,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 
 mod language;
 mod mcp;
+mod search;
 mod splitter;
 mod tools;
 mod watcher;
