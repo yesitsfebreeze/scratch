@@ -1,4 +1,7 @@
-# scratch |
+# scratch
+
+[![CI](https://github.com/yesitsfebreeze/scratch/actions/workflows/ci.yml/badge.svg)](https://github.com/yesitsfebreeze/scratch/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 MCP server that indexes source files at the function level, with a persistent scratch note per file for agent memory.
 
@@ -53,6 +56,8 @@ data/schema.json       →   .scratch/data/schema.skel.json         (structure)
 | `read_scratch` | 🧠 Read a source file's persistent scratch note |
 | `write_scratch` | ✍️ Write or append memory to a source file's scratch note |
 | `list_languages` | 🌐 List installed languages (extensions with fn-level support) |
+
+Plus index-inspection tools: `split` / `dry_run_split` (split one file, or preview without writing), `grep_source` (search skeletons + bodies), `validate` (orphans / dead refs / dupes), `ref_graph`, `body_stats`, `diff_body`, and `outline`.
 
 ## 💿 Install
 
@@ -109,6 +114,15 @@ Add to `.gitignore` (keeps the index out of git but commits the scratch notes):
 ```
 
 Optional: drop a `scratch.ini` in the project root instead of env vars — safe to commit.
+
+### Testing
+
+```bash
+cargo test          # unit + end-to-end MCP tests
+cargo clippy --all-targets -- -D warnings
+```
+
+The end-to-end tests drive the real binary over JSON-RPC in a throwaway directory, exercising every tool. CI runs fmt, clippy, build, and test on every push.
 
 ## 🔧 Configuration
 
