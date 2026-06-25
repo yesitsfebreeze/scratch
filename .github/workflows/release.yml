@@ -74,6 +74,15 @@ jobs:
           rustup target add wasm32-wasip1
           rustup default stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Use lld linker (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: 'echo "RUSTFLAGS=-C linker=lld-link" >> $env:GITHUB_ENV'
+
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
