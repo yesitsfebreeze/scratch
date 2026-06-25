@@ -175,6 +175,8 @@ pub fn split(
         raw: String,
         line_start: usize,
         line_end: usize,
+        #[serde(default)]
+        signature: String,
     }
 
     let resp: Resp = serde_json::from_slice(&out)?;
@@ -188,6 +190,7 @@ pub fn split(
                 &comment,
                 &src_display,
                 &b.name,
+                &b.signature,
                 &b.raw,
                 b.line_start,
                 b.line_end,

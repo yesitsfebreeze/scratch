@@ -19,6 +19,7 @@ struct Output {
 struct Body {
     path: String,
     name: String,
+    signature: String,
     raw: String,
     line_start: usize,
     line_end: usize,
@@ -104,6 +105,7 @@ fn split_py(source: &str, source_path: &Path, index_dir: &Path) -> Output {
         bodies.push(Body {
             path: body_path_slash,
             name: f.name,
+            signature: f.signature,
             raw: raw_body,
             line_start: f.line_start,
             line_end: f.line_end,
@@ -128,6 +130,7 @@ fn to_slash(p: &Path) -> String {
 
 struct DefLoc {
     name: String,
+    signature: String,
     body_start: usize,
     body_end: usize,
     body_indent: usize,
@@ -192,8 +195,18 @@ fn find_defs(source: &str) -> Vec<DefLoc> {
             if parsed.is_def && !nested_in_def && body_end > body_block_start {
                 let ls = i + 1;
                 let le = line_of(&line_starts, body_end.saturating_sub(1));
+                // `def …(…)` up to (not incl.) the colon, whitespace collapsed.
+                let signature = sig_end
+                    .map(|off| {
+                        source[content_start..off.saturating_sub(1)]
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default();
                 result.push(DefLoc {
                     name: qualified,
+                    signature,
                     body_start: body_block_start,
                     body_end,
                     body_indent,

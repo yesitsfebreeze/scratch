@@ -31,6 +31,7 @@ struct Output {
 struct Body {
     path: String,
     name: String,
+    signature: String,
     raw: String,
     line_start: usize,
     line_end: usize,
@@ -97,6 +98,7 @@ fn split_rs(source: &str, source_path: &Path, index_dir: &Path) -> Output {
 
         let line_start = line_of(source, f.decl_start);
         let line_end = line_of(source, f.body_close);
+        let signature = signature_of(source, f.decl_start, f.body_start - 1);
 
         let ref_text = format!("\n    // §{}\n", body_path_slash);
         let a = (f.body_start as i64 + offset) as usize;
@@ -107,6 +109,7 @@ fn split_rs(source: &str, source_path: &Path, index_dir: &Path) -> Output {
         bodies.push(Body {
             path: body_path_slash,
             name: f.name,
+            signature,
             raw: raw_body,
             line_start,
             line_end,
@@ -119,6 +122,17 @@ fn split_rs(source: &str, source_path: &Path, index_dir: &Path) -> Output {
 fn line_of(source: &str, byte_offset: usize) -> usize {
     let end = byte_offset.min(source.len());
     source.as_bytes()[..end].iter().filter(|&&b| b == b'\n').count() + 1
+}
+
+/// One-line declaration: from the start of the fn's line (so `pub`/`async`
+/// modifiers are kept) up to the opening brace, whitespace collapsed.
+fn signature_of(source: &str, decl_start: usize, open: usize) -> String {
+    let bytes = source.as_bytes();
+    let mut ls = decl_start;
+    while ls > 0 && bytes[ls - 1] != b'\n' {
+        ls -= 1;
+    }
+    source[ls..open].split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn strip_body_edges(s: &str) -> String {

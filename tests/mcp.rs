@@ -485,6 +485,88 @@ fn ref_graph_collapses_ambiguous_callees() {
 }
 
 #[test]
+fn ref_graph_resolves_callee_in_same_file() {
+    let dir = workdir();
+    // `dup` exists twice, but one def shares the caller's file — scope wins, so
+    // the edge resolves to a location instead of collapsing to ambiguous.
+    std::fs::write(
+        dir.join("src/c.rs"),
+        "fn dup() -> i32 {\n    1\n}\nfn caller() -> i32 {\n    dup()\n}\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/y.rs"), "fn dup() -> i32 {\n    2\n}\n").unwrap();
+    let out = drive(
+        &dir,
+        &[
+            call(1, "index_dir", serde_json::json!({ "src_dir": "src" })),
+            call(
+                2,
+                "ref_graph",
+                serde_json::json!({ "path": ".scratch/src/c/caller.fs", "direction": "out" }),
+            ),
+        ],
+    );
+    assert!(
+        out[1].contains("src/c.rs:1"),
+        "same-file def resolves: {}",
+        out[1]
+    );
+    assert!(
+        !out[1].contains("ambiguous"),
+        "same-file scope must disambiguate: {}",
+        out[1]
+    );
+}
+
+#[test]
+fn validate_fix_purges_stale_sources() {
+    let dir = workdir();
+    std::fs::write(dir.join("src/keep.rs"), "fn k() {\n    let _ = 1;\n}\n").unwrap();
+    std::fs::write(dir.join("src/gone.rs"), "fn g() {\n    let _ = 2;\n}\n").unwrap();
+    drive(
+        &dir,
+        &[call(
+            1,
+            "index_dir",
+            serde_json::json!({ "src_dir": "src" }),
+        )],
+    );
+    assert!(dir.join(".scratch/src/gone.skel.rs").exists());
+
+    // Source removed (as a deleted worktree would be) — its index entry is stale.
+    std::fs::remove_file(dir.join("src/gone.rs")).unwrap();
+    let out = drive(
+        &dir,
+        &[
+            call(1, "validate", serde_json::json!({})),
+            call(2, "validate", serde_json::json!({ "fix": true })),
+        ],
+    );
+    assert!(
+        out[0].contains("stale sources: 1"),
+        "stale detected: {}",
+        out[0]
+    );
+    assert!(
+        out[1].contains("purged 1 stale"),
+        "stale purged: {}",
+        out[1]
+    );
+    assert!(
+        !dir.join(".scratch/src/gone.skel.rs").exists(),
+        "stale skeleton removed"
+    );
+    assert!(
+        !dir.join(".scratch/src/gone").exists(),
+        "stale body dir removed"
+    );
+    assert!(
+        dir.join(".scratch/src/keep.skel.rs").exists(),
+        "live source kept"
+    );
+}
+
+#[test]
 fn search_maps_hits_to_source_file_and_fn() {
     let dir = workdir();
     std::fs::write(

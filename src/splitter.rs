@@ -10,19 +10,41 @@ pub fn wrap_body(
     comment: &str,
     src_display: &str,
     name: &str,
+    signature: &str,
     raw: &str,
     line_start: usize,
     line_end: usize,
 ) -> String {
+    let sig_line = if signature.is_empty() {
+        String::new()
+    } else {
+        format!("{comment} §sig {signature}\n")
+    };
     format!(
-        "{c} §head {src}:{ls}-{le} {n}\n{raw}\n{c} §foot {src} {n}",
+        "{c} §head {src}:{ls}-{le} {n}\n{sig}{raw}\n{c} §foot {src} {n}",
         c = comment,
         src = src_display,
         ls = line_start,
         le = line_end,
         n = name,
+        sig = sig_line,
         raw = raw
     )
+}
+
+/// The one-line declaration of a fn for the builtin Rust splitter: from the start
+/// of the fn's line (capturing `pub`/`async` modifiers) up to the opening brace,
+/// with interior whitespace collapsed.
+fn rust_signature(source: &str, decl_start: usize, open: usize) -> String {
+    let bytes = source.as_bytes();
+    let mut line_start = decl_start;
+    while line_start > 0 && bytes[line_start - 1] != b'\n' {
+        line_start -= 1;
+    }
+    source[line_start..open]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub fn split_for_ext(
@@ -60,6 +82,7 @@ pub fn split_generic(source_path: &Path, index_dir: &Path) -> Result<(String, Ve
         &comment,
         &src_display,
         "_body",
+        "",
         source.trim_end(),
         1,
         total_lines,
@@ -100,10 +123,12 @@ pub fn split(source_path: &Path, impl_dir: &Path) -> Result<(String, Vec<BodyFil
 
         let line_start = line_of(&source, f.decl_start);
         let line_end = line_of(&source, f.body_close);
+        let signature = rust_signature(&source, f.decl_start, f.body_start - 1);
         let body_content = wrap_body(
             comment,
             &src_display,
             &f.name,
+            &signature,
             &raw_body,
             line_start,
             line_end,

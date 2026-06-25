@@ -131,7 +131,7 @@ pub fn list() -> Value {
         },
         {
             "name": "validate",
-            "description": "Check index integrity: unresolved refs, orphans, dupes.",
+            "description": "Check index integrity: unresolved refs, orphans, dupes, and stale sources (origin file missing or now excluded). With fix=true, purges orphans, dead refs, and stale skeletons + bodies so the index re-converges.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -454,7 +454,6 @@ fn handle_open_source(args: Value) -> Result<String> {
     }
     entries.sort_by_key(|e| std::cmp::Reverse(e.0));
     let max_loc = max_loc_threshold();
-    let sigs = signatures_from_skeleton(&skel_path);
     let mut out = format!(
         "skeleton: {}\nbodies:   {}\n{}\n",
         skel_path.display(),
@@ -463,12 +462,19 @@ fn handle_open_source(args: Value) -> Result<String> {
     );
     for (_sz, p) in &entries {
         let fn_name = p.file_stem().unwrap_or_default().to_string_lossy();
-        let loc = count_body_loc(p);
+        let content = std::fs::read_to_string(p).unwrap_or_default();
+        let loc = content
+            .lines()
+            .filter(|l| !splitter::is_marker_line(l))
+            .count();
         let flag = if loc > max_loc { " ⚠" } else { "" };
-        let label = sigs
-            .get(call_name(&fn_name))
-            .map(String::as_str)
-            .unwrap_or(&fn_name);
+        // Prefer the language-emitted signature (§sig). A qualified stem (e.g.
+        // `Foo.bar`) carries scope the signature line can't, so keep it alongside.
+        let label = match body_signature(&content) {
+            Some(sig) if fn_name.contains('.') => format!("{fn_name}  {sig}"),
+            Some(sig) => sig,
+            None => fn_name.to_string(),
+        };
         out.push_str(&format!("{loc:6} loc  {label}{flag}\n"));
     }
     Ok(out.trim_end().to_string())
@@ -711,32 +717,41 @@ fn ref_graph_calls(
     }
 
     if direction == "out" || direction == "both" {
-        // Collect the call-names referenced in the target body, then resolve each
-        // once. Without type info a name like `new` matches every `new` in the
-        // repo — so a name with >1 def is reported as ambiguous rather than
-        // emitting dozens of false edges.
-        let mut used: BTreeSet<String> = BTreeSet::new();
+        // Resolve each call-name in the target body to its def. Without type info
+        // a name like `new` matches every `new` in the repo, so the scope
+        // heuristic prefers a def in the caller's own file, then its directory
+        // scope, before reporting the name ambiguous rather than emitting dozens
+        // of false edges — pure path ops, no language assumptions. The output set
+        // dedups names that recur across multiple target bodies.
+        let caller_dir = target_bodies
+            .first()
+            .and_then(|p| body_src_dir(p, index_dir));
+        let caller_scope = caller_dir.as_deref().map(scope_root);
+        let mut callees: BTreeSet<(String, String)> = BTreeSet::new();
         for bp in &target_bodies {
             let text = std::fs::read_to_string(bp).unwrap_or_default();
-            for c in calls_in_text(&strip_body_markers(&text)) {
-                if defs_by_call.contains_key(&c) {
-                    used.insert(c);
-                }
-            }
-        }
-        let mut callees: BTreeSet<(String, String)> = BTreeSet::new();
-        for name in used {
-            let defs: Vec<&(String, PathBuf)> = defs_by_call[&name]
-                .iter()
-                .filter(|(_, p)| !target_set.contains(p))
-                .collect();
-            match defs.as_slice() {
-                [] => {}
-                [(stem, dp)] => {
-                    callees.insert((stem.clone(), head_loc(dp)));
-                }
-                many => {
-                    callees.insert((name, format!("{} defs — ambiguous", many.len())));
+            for name in calls_in_text(&strip_body_markers(&text)) {
+                let Some(all) = defs_by_call.get(&name) else {
+                    continue;
+                };
+                let defs: Vec<&(String, PathBuf)> = all
+                    .iter()
+                    .filter(|(_, p)| !target_set.contains(p))
+                    .collect();
+                let scoped = scope_defs(
+                    &defs,
+                    caller_dir.as_deref(),
+                    caller_scope.as_deref(),
+                    index_dir,
+                );
+                match scoped.as_slice() {
+                    [] => {}
+                    [(stem, dp)] => {
+                        callees.insert(((*stem).clone(), head_loc(dp)));
+                    }
+                    many => {
+                        callees.insert((name, format!("{} defs — ambiguous", many.len())));
+                    }
                 }
             }
         }
@@ -791,6 +806,20 @@ fn handle_validate(args: Value) -> Result<String> {
         .cloned()
         .collect();
 
+    // Index entries whose origin source is gone or now excluded (e.g. a removed
+    // git worktree). The skeleton + its body dir should be purged so the index
+    // re-converges to the current source tree and exclusion rules.
+    let mut stale: Vec<(PathBuf, PathBuf, &'static str)> = Vec::new();
+    for skel in &skels {
+        if let Some(src) = skeleton_source(skel) {
+            if splitter::path_excluded(&src) {
+                stale.push((skel.clone(), src, "excluded"));
+            } else if !src.exists() {
+                stale.push((skel.clone(), src, "missing"));
+            }
+        }
+    }
+
     let mut out = String::new();
     out.push_str(&format!("skeletons:    {}\n", skels.len()));
     out.push_str(&format!("bodies:       {}\n", all_bodies.len()));
@@ -805,6 +834,14 @@ fn handle_validate(args: Value) -> Result<String> {
     out.push_str(&format!("duplicates:   {}\n", duplicates.len()));
     for (s, r) in &duplicates {
         out.push_str(&format!("  - {} :: {}\n", s.display(), r));
+    }
+    out.push_str(&format!("stale sources: {}\n", stale.len()));
+    for (skel, src, why) in &stale {
+        out.push_str(&format!(
+            "  - {} ({why}) <- {}\n",
+            splitter::to_slash(src),
+            splitter::to_slash(skel)
+        ));
     }
 
     if fix {
@@ -838,9 +875,19 @@ fn handle_validate(args: Value) -> Result<String> {
             affected_skels.insert(skel);
         }
         let _ = affected_skels;
+        let mut purged_stale = 0u32;
+        for (skel, _src, _why) in &stale {
+            let _ = std::fs::remove_file(skel);
+            if let Some(bd) = body_dir_for_skeleton(skel) {
+                if bd.is_dir() {
+                    let _ = std::fs::remove_dir_all(&bd);
+                }
+            }
+            purged_stale += 1;
+        }
         out.push_str(&format!(
-            "\nfixed: deleted {} orphans, removed {} dead refs\n",
-            deleted_orphans, removed_dead
+            "\nfixed: deleted {} orphans, removed {} dead refs, purged {} stale sources\n",
+            deleted_orphans, removed_dead, purged_stale
         ));
     }
 
@@ -1139,13 +1186,20 @@ fn grep_paths(paths: &[PathBuf], m: &Matcher, skip_section_markers: bool) -> Res
         } else {
             String::new()
         };
+        // Count code lines only: marker lines (§head/§sig/§foot) don't exist in the
+        // source, so the k-th code line maps to source line `head.start + k`.
+        let mut code_no = 0usize;
         for (i, line) in content.lines().enumerate() {
-            if skip_section_markers && splitter::is_marker_line(line) {
+            let marker = splitter::is_marker_line(line);
+            if !marker {
+                code_no += 1;
+            }
+            if skip_section_markers && marker {
                 continue;
             }
             if matcher_hits(m, line) {
                 let entry = match &head {
-                    Some(h) => format!("{}:{} [{}]: {}", h.src, h.start + i, name, line),
+                    Some(h) => format!("{}:{} [{}]: {}", h.src, h.start + code_no, name, line),
                     None => format!("{}:{}: {}", splitter::to_slash(path), i + 1, line),
                 };
                 results.push(entry);
@@ -1202,28 +1256,14 @@ fn format_iso8601(secs: u64) -> String {
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo, d, h, m, s)
 }
 
+/// Body code with every scratch marker line (§head/§sig/§foot) removed — leaves
+/// only real source, for diffing and call-graph scanning.
 fn strip_body_markers(content: &str) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-    let start = if lines
-        .first()
-        .is_some_and(|l| splitter::marker_payload(l).is_some_and(|p| p.starts_with("head")))
-    {
-        1
-    } else {
-        0
-    };
-    let end = if lines
-        .last()
-        .is_some_and(|l| splitter::marker_payload(l).is_some_and(|p| p.starts_with("foot")))
-    {
-        lines.len().saturating_sub(1)
-    } else {
-        lines.len()
-    };
-    if start >= end {
-        return String::new();
-    }
-    lines[start..end].join("\n")
+    content
+        .lines()
+        .filter(|l| !splitter::is_marker_line(l))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn extract_fn_region(source_path: &Path, fn_name: &str) -> Option<String> {
@@ -1334,6 +1374,68 @@ fn head_loc(body: &Path) -> String {
     head_loc_of(c.lines().next(), body)
 }
 
+/// The origin source path recorded in a skeleton's `§source` header line.
+fn skeleton_source(skel: &Path) -> Option<PathBuf> {
+    let c = std::fs::read_to_string(skel).ok()?;
+    let p = splitter::marker_payload(c.lines().next()?)?.strip_prefix("source ")?;
+    Some(PathBuf::from(p.trim()))
+}
+
+/// The per-function body dir for a skeleton: `.scratch/a/b.skel.rs` -> `.scratch/a/b`.
+fn body_dir_for_skeleton(skel: &Path) -> Option<PathBuf> {
+    let base = skel.file_name()?.to_str()?.split(".skel.").next()?;
+    Some(skel.parent()?.join(base))
+}
+
+/// The source dir a body belongs to, relative to the index root: a body at
+/// `.scratch/crates/x/src/foo/bar.fs` -> `crates/x/src/foo`. Powers scope-aware
+/// callee resolution with pure path ops — no file reads.
+fn body_src_dir(body: &Path, index_dir: &Path) -> Option<PathBuf> {
+    body.parent()?
+        .strip_prefix(index_dir)
+        .ok()
+        .map(Path::to_path_buf)
+}
+
+/// Coarse, language-neutral locality bucket: the first two path components
+/// (e.g. `crates/bombshell`, `packages/web`, `src/server`). Not a crate/package
+/// concept — just "roughly the same area of the tree".
+fn scope_root(dir: &Path) -> PathBuf {
+    dir.components().take(2).collect()
+}
+
+/// Narrow a set of same-named defs toward the caller: defs in the caller's own
+/// file win; failing that, defs sharing its directory scope; failing that, all.
+fn scope_defs<'a>(
+    defs: &[&'a (String, PathBuf)],
+    caller_dir: Option<&Path>,
+    caller_scope: Option<&Path>,
+    index_dir: &Path,
+) -> Vec<&'a (String, PathBuf)> {
+    let same_file: Vec<_> = defs
+        .iter()
+        .filter(|(_, p)| body_src_dir(p, index_dir).as_deref() == caller_dir)
+        .copied()
+        .collect();
+    if !same_file.is_empty() {
+        return same_file;
+    }
+    let same_scope: Vec<_> = defs
+        .iter()
+        .filter(|(_, p)| {
+            body_src_dir(p, index_dir)
+                .map(|d| scope_root(&d))
+                .as_deref()
+                == caller_scope
+        })
+        .copied()
+        .collect();
+    if !same_scope.is_empty() {
+        return same_scope;
+    }
+    defs.to_vec()
+}
+
 /// Identifiers that appear in call position (`name(` or `name (`) — the edges of
 /// the call graph. Keyword call-likes (`if (`) are filtered later by the known-fn
 /// universe.
@@ -1374,23 +1476,14 @@ fn format_edges(label: &str, edges: &BTreeSet<(String, String)>) -> String {
     s
 }
 
-/// Best-effort fn signatures from a skeleton (the skeleton keeps each `fn …`
-/// declaration; only the body is replaced by a ref). Maps fn name -> decl line.
-fn signatures_from_skeleton(skel: &Path) -> BTreeMap<String, String> {
-    let mut map = BTreeMap::new();
-    let Ok(content) = std::fs::read_to_string(skel) else {
-        return map;
-    };
-    for line in content.lines() {
-        let t = line.trim_start();
-        if t.starts_with("//") {
-            continue;
-        }
-        if let Some((name, sig)) = fn_decl(t) {
-            map.entry(name).or_insert(sig);
-        }
-    }
-    map
+/// The signature a language module recorded for a body, read from its `§sig`
+/// marker line. None when the language emitted no signature.
+fn body_signature(content: &str) -> Option<String> {
+    content.lines().find_map(|l| {
+        splitter::marker_payload(l)
+            .and_then(|p| p.strip_prefix("sig "))
+            .map(|s| s.to_string())
+    })
 }
 
 /// Strip leading visibility / modifier keywords so the next token is the item
@@ -1424,20 +1517,6 @@ fn item_signature(line: &str) -> String {
         .unwrap_or(line)
         .trim_end()
         .to_string()
-}
-
-/// Parse a `fn` declaration line into (name, cleaned signature without the body
-/// brace). Tolerates `pub`/`async`/`unsafe`/`const`/`default` prefixes.
-fn fn_decl(line: &str) -> Option<(String, String)> {
-    let after = strip_item_prefixes(line).strip_prefix("fn ")?;
-    let name: String = after
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '_')
-        .collect();
-    if name.is_empty() {
-        return None;
-    }
-    Some((name, item_signature(line)))
 }
 
 fn naive_diff(a: &str, b: &str) -> String {
