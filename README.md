@@ -92,7 +92,8 @@ Launcher overrides: `SCRATCH_BIN=/path/to/scratch` uses a local build (skips the
 ## Develop / release
 
 - `cargo test` · `cargo clippy --all-targets -- -D warnings` · `cargo fmt` — CI enforces all three.
-- Release: bump `Cargo.toml`, `.claude-plugin/plugin.json`, and `VERSION` in `bin/scratch`, then `git tag vX.Y.Z && git push origin vX.Y.Z` → builds + uploads per-platform binaries.
+- **Auto version bump:** a pre-push hook patch-bumps the version in lockstep (`Cargo.toml`, `Cargo.lock`, both manifests, `bin/scratch`) on every push to `master`. Enable once per clone: `git config core.hooksPath .githooks`. Skip a push with `SCRATCH_NO_BUMP=1 git push`. It re-pushes so the bump rides the same `git push`, so git prints a harmless `failed to push some refs` (the original push being superseded) — the push succeeds and the tree stays clean. Tag pushes and feature branches are not bumped.
+- Release: `git tag vX.Y.Z && git push origin vX.Y.Z` → builds + uploads per-platform binaries (use the current bumped version).
 
 ## License
 
