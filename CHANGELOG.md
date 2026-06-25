@@ -5,6 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Changed
+- Rust `impl` methods are now indexed under their type — `OwnedPty.new`, `Config.default` — instead of bare `new`/`default`. Two same-named methods on different types in one file no longer collide on the same `.fs` body (which silently overwrote one), and the function map shows the qualified name. Matches the existing Python `Class.method` scheme. (Re-index existing trees; `validate --fix` clears the now-orphaned bare-name bodies.)
 - `ref_graph` is now a real function call graph: for a `.fs` body path or a bare fn name it reports callers (`in`) and callees (`out`), each with its source location, computed from the body index. A source-file path keeps the previous skeleton/bodies view. Callee names with more than one definition collapse to one `N defs — ambiguous` line; a same-file or same-directory-scope definition is preferred before declaring ambiguity (pure path heuristic, no type info).
 - `search_bodies` / `grep_source` hits now map back to the real `source:line` and owning fn (e.g. `src/wrap.rs:812 [handle_stdin_idle]: …`) instead of the `.fs` body offset.
 - `open_source` shows function signatures. Signatures are produced by the **language module**, not core: the split ABI now carries a per-body `signature`, persisted as a `§sig` marker line in the body and served from there. Languages that emit none fall back to the bare name. Core no longer parses Rust declarations.

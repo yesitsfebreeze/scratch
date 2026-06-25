@@ -644,6 +644,41 @@ fn index_dir_skips_git_worktrees() {
 }
 
 #[test]
+fn rust_qualifies_impl_methods() {
+    let dir = workdir();
+    // Same method name on two types: must produce two distinct bodies (no
+    // overwrite) and show qualified in the function map.
+    std::fs::write(
+        dir.join("src/q.rs"),
+        "struct A;\nstruct B;\nimpl A {\n    pub fn new() -> A {\n        A\n    }\n}\nimpl B {\n    pub fn new() -> B {\n        B\n    }\n}\n",
+    )
+    .unwrap();
+    let out = drive(
+        &dir,
+        &[
+            call(1, "index_dir", serde_json::json!({ "src_dir": "src" })),
+            call(
+                2,
+                "open_source",
+                serde_json::json!({ "source_path": "src/q.rs" }),
+            ),
+        ],
+    );
+    assert!(dir.join(".scratch/src/q/A.new.fs").exists(), "A.new body");
+    assert!(dir.join(".scratch/src/q/B.new.fs").exists(), "B.new body");
+    assert!(
+        out[1].contains("A.new"),
+        "open_source qualified: {}",
+        out[1]
+    );
+    assert!(
+        out[1].contains("B.new"),
+        "open_source qualified: {}",
+        out[1]
+    );
+}
+
+#[test]
 fn open_source_and_outline_show_signatures() {
     let dir = workdir();
     std::fs::write(

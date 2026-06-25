@@ -121,7 +121,11 @@ fn split_rs(source: &str, source_path: &Path, index_dir: &Path) -> Output {
 
 fn line_of(source: &str, byte_offset: usize) -> usize {
     let end = byte_offset.min(source.len());
-    source.as_bytes()[..end].iter().filter(|&&b| b == b'\n').count() + 1
+    source.as_bytes()[..end]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count()
+        + 1
 }
 
 /// One-line declaration: from the start of the fn's line (so `pub`/`async`
@@ -132,11 +136,17 @@ fn signature_of(source: &str, decl_start: usize, open: usize) -> String {
     while ls > 0 && bytes[ls - 1] != b'\n' {
         ls -= 1;
     }
-    source[ls..open].split_whitespace().collect::<Vec<_>>().join(" ")
+    source[ls..open]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn strip_body_edges(s: &str) -> String {
-    let s = s.strip_prefix("\r\n").or_else(|| s.strip_prefix('\n')).unwrap_or(s);
+    let s = s
+        .strip_prefix("\r\n")
+        .or_else(|| s.strip_prefix('\n'))
+        .unwrap_or(s);
     s.trim_end().to_string()
 }
 
@@ -155,9 +165,15 @@ struct FnLoc {
 fn find_fns(source: &str) -> Vec<FnLoc> {
     let bytes = source.as_bytes();
     let mut result = Vec::new();
+    // Stack of enclosing `impl` blocks: (closing-brace offset, type label). A fn
+    // found inside one is named `Type.fn` so methods don't collide across impls.
+    let mut scopes: Vec<(usize, String)> = Vec::new();
     let mut i = 0;
 
     while i < bytes.len() {
+        while scopes.last().is_some_and(|s| i >= s.0) {
+            scopes.pop();
+        }
         if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'/' {
             while i < bytes.len() && bytes[i] != b'\n' {
                 i += 1;
@@ -183,26 +199,33 @@ fn find_fns(source: &str) -> Vec<FnLoc> {
                 continue;
             }
         }
-        if i + 2 <= bytes.len() && &bytes[i..i + 2] == b"fn" {
-            let pre_ok = i == 0 || !is_ident_char(bytes[i - 1]);
-            let post_ok = i + 2 >= bytes.len() || !is_ident_char(bytes[i + 2]);
-            if pre_ok && post_ok {
-                let name_start = skip_ws(bytes, i + 2);
-                if name_start < bytes.len() && is_ident_start(bytes[name_start]) {
-                    let name_end = ident_end(bytes, name_start);
-                    let name = String::from_utf8_lossy(&bytes[name_start..name_end]).to_string();
-                    if let Some(open) = find_open_brace(bytes, name_end) {
-                        if let Some(close) = find_close_brace(bytes, open) {
-                            result.push(FnLoc {
-                                name,
-                                decl_start: i,
-                                body_start: open + 1,
-                                body_end: close,
-                                body_close: close,
-                            });
-                            i = close + 1;
-                            continue;
-                        }
+        if keyword(bytes, i, b"impl") {
+            if let Some((open, close, ty)) = parse_impl(source, bytes, i) {
+                scopes.push((close, ty));
+                i = open + 1;
+                continue;
+            }
+        }
+        if keyword(bytes, i, b"fn") {
+            let name_start = skip_ws(bytes, i + 2);
+            if name_start < bytes.len() && is_ident_start(bytes[name_start]) {
+                let name_end = ident_end(bytes, name_start);
+                if let Some(open) = find_open_brace(bytes, name_end) {
+                    if let Some(close) = find_close_brace(bytes, open) {
+                        let raw = String::from_utf8_lossy(&bytes[name_start..name_end]);
+                        let name = match scopes.last() {
+                            Some((_, ty)) if !ty.is_empty() => format!("{ty}.{raw}"),
+                            _ => raw.into_owned(),
+                        };
+                        result.push(FnLoc {
+                            name,
+                            decl_start: i,
+                            body_start: open + 1,
+                            body_end: close,
+                            body_close: close,
+                        });
+                        i = close + 1;
+                        continue;
                     }
                 }
             }
@@ -210,6 +233,64 @@ fn find_fns(source: &str) -> Vec<FnLoc> {
         i += 1;
     }
     result
+}
+
+/// A keyword `kw` sits at `i` with identifier boundaries on both sides.
+fn keyword(bytes: &[u8], i: usize, kw: &[u8]) -> bool {
+    let n = kw.len();
+    if i + n > bytes.len() || &bytes[i..i + n] != kw {
+        return false;
+    }
+    let pre = i == 0 || !is_ident_char(bytes[i - 1]);
+    let post = i + n >= bytes.len() || !is_ident_char(bytes[i + n]);
+    pre && post
+}
+
+/// Parse an `impl` header at `i`: returns (open-brace, close-brace, type label).
+/// `impl<T> Trait for Type<T>` -> `Type`; `impl Type` -> `Type`.
+fn parse_impl(source: &str, bytes: &[u8], i: usize) -> Option<(usize, usize, String)> {
+    let mut j = skip_ws(bytes, i + 4);
+    if j < bytes.len() && bytes[j] == b'<' {
+        j = skip_angles(bytes, j);
+        j = skip_ws(bytes, j);
+    }
+    let open = find_open_brace(bytes, j)?;
+    let close = find_close_brace(bytes, open)?;
+    Some((open, close, type_label(&source[j..open])))
+}
+
+fn skip_angles(bytes: &[u8], mut i: usize) -> usize {
+    let mut depth = 0i32;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'<' => depth += 1,
+            b'>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i + 1;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    i
+}
+
+/// Reduce an impl subject to the concrete type's base name: take the part after
+/// ` for ` when present, drop generics and path qualifiers.
+fn type_label(subject: &str) -> String {
+    subject
+        .rsplit(" for ")
+        .next()
+        .unwrap_or(subject)
+        .split(|c: char| c.is_whitespace() || c == '<')
+        .find(|t| !t.is_empty())
+        .unwrap_or("")
+        .rsplit("::")
+        .next()
+        .unwrap_or("")
+        .to_string()
 }
 
 fn find_open_brace(bytes: &[u8], from: usize) -> Option<usize> {
