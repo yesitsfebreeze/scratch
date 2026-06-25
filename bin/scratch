@@ -1,15 +1,16 @@
 #!/bin/sh
 # scratch MCP launcher.
 #
-# On first run it downloads the prebuilt binary for this platform from the
-# matching GitHub release, caches it, then execs it. This lets the plugin work
-# with no local Rust toolchain — install the plugin and you are done.
+# On first run it downloads the prebuilt binary for this platform — the release
+# matching VERSION if it exists, otherwise the latest published release — caches
+# it, then execs it. So the plugin works with no local Rust toolchain, and a repo
+# version that has run ahead of the last release still resolves to a real binary.
 #
 # Dev override: set SCRATCH_BIN to an absolute path to use a local build, e.g.
 #   SCRATCH_BIN=target/debug/scratch
 set -eu
 
-VERSION="0.1.1"            # keep in sync with plugin.json and the vX.Y.Z release tag
+VERSION="0.1.1"            # cache key + preferred release; falls back to latest
 REPO="yesitsfebreeze/scratch"
 
 if [ "${SCRATCH_BIN:-}" != "" ]; then
@@ -33,20 +34,37 @@ asset="scratch-${os}-${arch}.tar.gz"
 cache="${CLAUDE_PLUGIN_DATA:-${XDG_CACHE_HOME:-$HOME/.cache}/scratch}/v${VERSION}"
 bin="$cache/scratch"
 
-if [ ! -x "$bin" ]; then
-  mkdir -p "$cache"
-  base="${SCRATCH_DOWNLOAD_BASE:-https://github.com/$REPO/releases/download}"
-  url="${base}/v${VERSION}/${asset}"
-  tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp"' EXIT
+fetch() { # url dest — returns non-zero (without tripping set -e) when called in a condition
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$tmp/$asset"
+    curl -fsSL "$1" -o "$2" 2>/dev/null
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$tmp/$asset" "$url"
+    wget -qO "$2" "$1" 2>/dev/null
   else
     echo "scratch: need curl or wget to download the binary" >&2
+    return 2
+  fi
+}
+
+if [ ! -x "$bin" ]; then
+  mkdir -p "$cache"
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+
+  ok=0
+  if [ -n "${SCRATCH_DOWNLOAD_BASE:-}" ]; then
+    if fetch "${SCRATCH_DOWNLOAD_BASE}/v${VERSION}/${asset}" "$tmp/$asset"; then ok=1; fi
+  else
+    if fetch "https://github.com/$REPO/releases/download/v${VERSION}/${asset}" "$tmp/$asset"; then
+      ok=1
+    elif fetch "https://github.com/$REPO/releases/latest/download/${asset}" "$tmp/$asset"; then
+      ok=1
+    fi
+  fi
+  if [ "$ok" -ne 1 ]; then
+    echo "scratch: could not download $asset (tried v${VERSION} and latest)" >&2
     exit 1
   fi
+
   tar -xzf "$tmp/$asset" -C "$tmp"
   mv "$tmp/scratch" "$bin"
   chmod +x "$bin"
