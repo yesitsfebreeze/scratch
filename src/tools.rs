@@ -427,7 +427,10 @@ fn handle_open_source(args: Value) -> Result<String> {
     let scratch_loc = std::fs::read_to_string(&scratch)
         .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count())
         .unwrap_or(0);
-    let file_impl_dir = index_dir.join(src.with_extension(""));
+    // Bodies are written under the normalized source key (see splitter::split),
+    // so resolve the same key here — a raw `./`-prefixed or absolute path would
+    // otherwise miss them.
+    let file_impl_dir = index_dir.join(splitter::source_key_path(&src).with_extension(""));
     let mut entries: Vec<(u64, PathBuf)> = if file_impl_dir.exists() {
         std::fs::read_dir(&file_impl_dir)?
             .filter_map(|e| e.ok())

@@ -388,3 +388,32 @@ fn read_body_paginates_with_range() {
         out[1]
     );
 }
+
+#[test]
+fn open_source_with_absolute_path_finds_bodies() {
+    let dir = workdir();
+    std::fs::write(dir.join("src/lib.rs"), "fn greet() {\n    let _ = 1;\n}\n").unwrap();
+    let abs = dir.join("src/lib.rs");
+    let out = drive(
+        &dir,
+        &[
+            call(1, "index_dir", serde_json::json!({ "src_dir": "src" })),
+            call(
+                2,
+                "open_source",
+                serde_json::json!({ "source_path": abs.to_str().unwrap() }),
+            ),
+        ],
+    );
+    // The body dir must resolve via the normalized source key, not the raw path.
+    assert!(
+        out[1].contains("greet"),
+        "open_source(abs) should list fns: {}",
+        out[1]
+    );
+    assert!(
+        !out[1].contains("no function bodies"),
+        "open_source(abs): {}",
+        out[1]
+    );
+}
