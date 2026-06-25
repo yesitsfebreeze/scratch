@@ -711,16 +711,32 @@ fn ref_graph_calls(
     }
 
     if direction == "out" || direction == "both" {
-        let mut callees: BTreeSet<(String, String)> = BTreeSet::new();
+        // Collect the call-names referenced in the target body, then resolve each
+        // once. Without type info a name like `new` matches every `new` in the
+        // repo — so a name with >1 def is reported as ambiguous rather than
+        // emitting dozens of false edges.
+        let mut used: BTreeSet<String> = BTreeSet::new();
         for bp in &target_bodies {
             let text = std::fs::read_to_string(bp).unwrap_or_default();
             for c in calls_in_text(&strip_body_markers(&text)) {
-                if let Some(defs) = defs_by_call.get(&c) {
-                    for (stem, dp) in defs {
-                        if stem != &target_name {
-                            callees.insert((stem.clone(), head_loc(dp)));
-                        }
-                    }
+                if defs_by_call.contains_key(&c) {
+                    used.insert(c);
+                }
+            }
+        }
+        let mut callees: BTreeSet<(String, String)> = BTreeSet::new();
+        for name in used {
+            let defs: Vec<&(String, PathBuf)> = defs_by_call[&name]
+                .iter()
+                .filter(|(_, p)| !target_set.contains(p))
+                .collect();
+            match defs.as_slice() {
+                [] => {}
+                [(stem, dp)] => {
+                    callees.insert((stem.clone(), head_loc(dp)));
+                }
+                many => {
+                    callees.insert((name, format!("{} defs — ambiguous", many.len())));
                 }
             }
         }

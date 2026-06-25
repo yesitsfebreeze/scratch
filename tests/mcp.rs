@@ -454,6 +454,37 @@ fn ref_graph_reports_callers_and_callees() {
 }
 
 #[test]
+fn ref_graph_collapses_ambiguous_callees() {
+    let dir = workdir();
+    // Two fns named `dup` in different files: a call to `dup()` can't be resolved
+    // without type info, so it must collapse to one ambiguous line, not two edges.
+    std::fs::write(dir.join("src/x.rs"), "pub fn dup() -> i32 {\n    1\n}\n").unwrap();
+    std::fs::write(dir.join("src/y.rs"), "pub fn dup() -> i32 {\n    2\n}\n").unwrap();
+    std::fs::write(dir.join("src/c.rs"), "fn caller() -> i32 {\n    dup()\n}\n").unwrap();
+    let out = drive(
+        &dir,
+        &[
+            call(1, "index_dir", serde_json::json!({ "src_dir": "src" })),
+            call(
+                2,
+                "ref_graph",
+                serde_json::json!({ "path": ".scratch/src/c/caller.fs", "direction": "out" }),
+            ),
+        ],
+    );
+    assert!(
+        out[1].contains("2 defs — ambiguous"),
+        "ambiguous callee must collapse: {}",
+        out[1]
+    );
+    assert!(
+        out[1].matches("dup").count() == 1,
+        "dup must appear once, not per-def: {}",
+        out[1]
+    );
+}
+
+#[test]
 fn search_maps_hits_to_source_file_and_fn() {
     let dir = workdir();
     std::fs::write(
