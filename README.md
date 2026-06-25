@@ -16,7 +16,12 @@ No toolchain needed — on first run the plugin downloads the prebuilt binary fo
 
 ## Use it by default
 
-Add to your project `CLAUDE.md`:
+The plugin makes Claude index-first automatically — two layers, no setup:
+
+- The **skill** is auto-discovered, so Claude knows the tools and when to use them.
+- A **`SessionStart` hook** injects the navigation rule each session: *navigate with `search_bodies`/`open_source`/`read_scratch` → `read_body`, and only `Read`/`Grep` the whole file if that isn't enough.* Non-blocking — it never prevents a read, just orders them.
+
+Optional extra reinforcement — add a line to your project `CLAUDE.md`:
 
 ```md
 Use the `scratch` MCP tools to explore code (the scratch skill): `open_source` → function

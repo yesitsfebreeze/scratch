@@ -7,6 +7,15 @@ description: Use the scratch MCP tools instead of Read/Grep to explore code. Fn-
 
 Fn-level code index over MCP. Each source file is split into per-function `.fs` bodies under `.scratch/`, and gets a `*.scratch.md` note for durable memory. Source is truth; `.scratch/` is a derived cache a one-way watcher rebuilds. Edit the source with normal tools — never the `.fs` files.
 
+## Navigate before reading
+
+For indexed source, use the index first; open the raw file only if you still need it after:
+
+1. `search_bodies(query)` / `open_source(path)` — locate the function.
+2. `read_scratch(path)` — check prior notes.
+3. `read_body(path)` — load just that function.
+4. `Read`/`Grep` the whole source file only when steps 1–3 are not enough.
+
 ## Tools
 
 - `index_dir(src_dir)` — bootstrap: split a whole tree. Run once if `.scratch/` is empty.
