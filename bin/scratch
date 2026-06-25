@@ -35,7 +35,8 @@ bin="$cache/scratch"
 
 if [ ! -x "$bin" ]; then
   mkdir -p "$cache"
-  url="https://github.com/$REPO/releases/download/v${VERSION}/${asset}"
+  base="${SCRATCH_DOWNLOAD_BASE:-https://github.com/$REPO/releases/download}"
+  url="${base}/v${VERSION}/${asset}"
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
   if command -v curl >/dev/null 2>&1; then

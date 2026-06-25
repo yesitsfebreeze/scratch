@@ -82,7 +82,7 @@ rustup target add wasm32-wasip1
 cargo install --git https://github.com/yesitsfebreeze/scratch
 ```
 
-`SCRATCH_BIN=/path/to/scratch` makes the plugin launcher use a local build.
+Launcher overrides: `SCRATCH_BIN=/path/to/scratch` uses a local build (skips the download); `SCRATCH_DOWNLOAD_BASE=<url>` fetches the binary from an alternate mirror instead of GitHub releases.
 
 ## Develop / release
 
