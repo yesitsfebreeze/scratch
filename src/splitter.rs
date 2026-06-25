@@ -551,7 +551,9 @@ pub fn marker_payload(line: &str) -> Option<&str> {
     let t = line.trim_start();
     let idx = t.find(MARKER)?;
     let prefix = &t[..idx];
-    if prefix.len() > 4 {
+    // Comment token + a space, e.g. `// `, `# `, `<!-- ` (HTML). The char-class
+    // check below is the real guard; this only bounds how far in a marker starts.
+    if prefix.len() > 5 {
         return None;
     }
     if !prefix
@@ -632,6 +634,7 @@ mod tests {
             Some("head src/x.rs:1-2 f")
         );
         assert_eq!(marker_payload("    // §src/x/f.fs"), Some("src/x/f.fs"));
+        assert_eq!(marker_payload("<!-- §src/x/f.fs"), Some("src/x/f.fs"));
         assert!(is_marker_line("# §source data.json"));
         // No marker, or marker buried behind real code, is not a marker line.
         assert_eq!(marker_payload("let x = 1;"), None);

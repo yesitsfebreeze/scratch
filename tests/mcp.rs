@@ -253,6 +253,175 @@ fn odin_extracts_procs_and_skips_typedecls() {
 }
 
 #[test]
+fn go_extracts_funcs_and_methods_skips_literals() {
+    let dir = workdir();
+    std::fs::write(
+        dir.join("src/m.go"),
+        "package m\n\ntype Handler func(int) int\n\nfunc add(a int, b int) int {\n\treturn a + b\n}\n\nfunc (p Point) Dist() float64 {\n\treturn 0\n}\n\nvar h = func(x int) int {\n\treturn x\n}\n",
+    )
+    .unwrap();
+    let out = drive(
+        &dir,
+        &[
+            call(
+                1,
+                "index_dir",
+                serde_json::json!({ "src_dir": "src", "ext": "go" }),
+            ),
+            call(
+                2,
+                "open_source",
+                serde_json::json!({ "source_path": "src/m.go", "ext": "go" }),
+            ),
+        ],
+    );
+    assert!(out[0].contains("indexed 1 files"), "index_dir: {}", out[0]);
+    assert!(out[1].contains("add"), "open_source: {}", out[1]);
+    assert!(out[1].contains("Point.Dist"), "open_source: {}", out[1]);
+    assert!(dir.join(".scratch/src/m/add.fs").exists());
+    // Methods are qualified by receiver type.
+    assert!(dir.join(".scratch/src/m/Point.Dist.fs").exists());
+    // A `type … func(…)` alias and the anonymous literal assigned to `h` have no
+    // named declaration and must not be indexed.
+    assert!(!dir.join(".scratch/src/m/Handler.fs").exists());
+    assert!(!dir.join(".scratch/src/m/h.fs").exists());
+}
+
+#[test]
+fn php_extracts_funcs_and_qualified_methods_skips_bodiless() {
+    let dir = workdir();
+    std::fs::write(
+        dir.join("src/m.php"),
+        "<?php\n\ninterface I {\n\tpublic function need(): int;\n}\n\nfunction add($a, $b) {\n\treturn $a + $b;\n}\n\nclass Calc {\n\tpublic function run() {\n\t\treturn 1;\n\t}\n}\n\n$f = function ($x) { return $x; };\n",
+    )
+    .unwrap();
+    let out = drive(
+        &dir,
+        &[
+            call(
+                1,
+                "index_dir",
+                serde_json::json!({ "src_dir": "src", "ext": "php" }),
+            ),
+            call(
+                2,
+                "open_source",
+                serde_json::json!({ "source_path": "src/m.php", "ext": "php" }),
+            ),
+        ],
+    );
+    assert!(out[0].contains("indexed 1 files"), "index_dir: {}", out[0]);
+    assert!(out[1].contains("add"), "open_source: {}", out[1]);
+    assert!(out[1].contains("Calc.run"), "open_source: {}", out[1]);
+    assert!(dir.join(".scratch/src/m/add.fs").exists());
+    // Methods are qualified by their class.
+    assert!(dir.join(".scratch/src/m/Calc.run.fs").exists());
+    // A bodiless interface method and the anonymous closure have no body and
+    // must not be indexed.
+    assert!(!dir.join(".scratch/src/m/I.need.fs").exists());
+    assert!(!dir.join(".scratch/src/m/need.fs").exists());
+}
+
+#[test]
+fn html_extracts_id_elements_and_skips_unkeyed() {
+    let dir = workdir();
+    std::fs::write(
+        dir.join("src/page.html"),
+        "<!doctype html>\n<body>\n<header id=\"top\">\n<img id=\"logo\" src=\"x.png\">\n<nav>menu</nav>\n</header>\n<main>\n<section id=\"intro\">\n<p>hello</p>\n</section>\n</main>\n</body>\n",
+    )
+    .unwrap();
+    let out = drive(
+        &dir,
+        &[
+            call(
+                1,
+                "index_dir",
+                serde_json::json!({ "src_dir": "src", "ext": "html" }),
+            ),
+            call(
+                2,
+                "open_source",
+                serde_json::json!({ "source_path": "src/page.html", "ext": "html" }),
+            ),
+        ],
+    );
+    assert!(out[0].contains("indexed 1 files"), "index_dir: {}", out[0]);
+    assert!(out[1].contains("top"), "open_source: {}", out[1]);
+    assert!(out[1].contains("intro"), "open_source: {}", out[1]);
+    assert!(dir.join(".scratch/src/page/top.fs").exists());
+    assert!(dir.join(".scratch/src/page/intro.fs").exists());
+    // A void element (`<img id>`) has no body and must not be indexed.
+    assert!(!dir.join(".scratch/src/page/logo.fs").exists());
+}
+
+#[test]
+fn js_extracts_functions_arrows_and_class_methods() {
+    let dir = workdir();
+    std::fs::write(
+        dir.join("src/m.js"),
+        "function add(a, b) {\n  return a + b;\n}\n\nconst load = async (url) => {\n  return url;\n};\n\nconst inc = x => x + 1;\n\nclass Point {\n  dist() {\n    return 0;\n  }\n}\n",
+    )
+    .unwrap();
+    let out = drive(
+        &dir,
+        &[
+            call(
+                1,
+                "index_dir",
+                serde_json::json!({ "src_dir": "src", "ext": "js" }),
+            ),
+            call(
+                2,
+                "open_source",
+                serde_json::json!({ "source_path": "src/m.js", "ext": "js" }),
+            ),
+        ],
+    );
+    assert!(out[0].contains("indexed 1 files"), "index_dir: {}", out[0]);
+    assert!(out[1].contains("add"), "open_source: {}", out[1]);
+    assert!(out[1].contains("load"), "open_source: {}", out[1]);
+    assert!(dir.join(".scratch/src/m/add.fs").exists());
+    assert!(dir.join(".scratch/src/m/load.fs").exists());
+    // Class methods are qualified by their class.
+    assert!(dir.join(".scratch/src/m/Point.dist.fs").exists());
+    // An expression-bodied arrow has no brace body and must not be indexed.
+    assert!(!dir.join(".scratch/src/m/inc.fs").exists());
+}
+
+#[test]
+fn cpp_extracts_funcs_methods_and_skips_declarations() {
+    let dir = workdir();
+    std::fs::write(
+        dir.join("src/m.cpp"),
+        "int add(int a, int b);\n\nint add(int a, int b) {\n    return a + b;\n}\n\nclass Point {\npublic:\n    int dist() const {\n        return 0;\n    }\n    virtual void pure() = 0;\n};\n\nvoid Point2::norm() {\n    work();\n}\n",
+    )
+    .unwrap();
+    let out = drive(
+        &dir,
+        &[
+            call(
+                1,
+                "index_dir",
+                serde_json::json!({ "src_dir": "src", "ext": "cpp" }),
+            ),
+            call(
+                2,
+                "open_source",
+                serde_json::json!({ "source_path": "src/m.cpp", "ext": "cpp" }),
+            ),
+        ],
+    );
+    assert!(out[0].contains("indexed 1 files"), "index_dir: {}", out[0]);
+    assert!(out[1].contains("add"), "open_source: {}", out[1]);
+    assert!(dir.join(".scratch/src/m/add.fs").exists());
+    // Methods are qualified by their type, in-class and out-of-line.
+    assert!(dir.join(".scratch/src/m/Point.dist.fs").exists());
+    assert!(dir.join(".scratch/src/m/Point2.norm.fs").exists());
+    // A pure-virtual declaration has no body and must not be indexed.
+    assert!(!dir.join(".scratch/src/m/Point.pure.fs").exists());
+}
+
+#[test]
 fn validate_reports_clean_index() {
     let dir = workdir();
     std::fs::write(

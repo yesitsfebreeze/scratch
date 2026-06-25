@@ -3,6 +3,11 @@ target/
 languages/rs/target/
 languages/py/target/
 languages/odin/target/
+languages/go/target/
+languages/php/target/
+languages/html/target/
+languages/cpp/target/
+languages/js/target/
 
 # generated index (not source of truth) — but keep the scratch notes,
 # they are durable agent memory, not derived cache.

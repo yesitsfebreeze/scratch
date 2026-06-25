@@ -10,6 +10,19 @@ use crate::splitter::BodyFile;
 const BUILTIN_RS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/split_language_rs.wasm"));
 const BUILTIN_PY: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/split_language_py.wasm"));
 const BUILTIN_ODIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/split_language_odin.wasm"));
+const BUILTIN_GO: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/split_language_go.wasm"));
+const BUILTIN_PHP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/split_language_php.wasm"));
+const BUILTIN_HTML: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/split_language_html.wasm"));
+const BUILTIN_CPP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/split_language_cpp.wasm"));
+const BUILTIN_JS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/split_language_js.wasm"));
+
+/// Extensions routed to the builtin JavaScript module.
+const JS_EXTS: &[&str] = &["js", "mjs", "cjs", "jsx"];
+
+/// Extensions routed to the builtin C++ module (the finder also parses plain C).
+const CPP_EXTS: &[&str] = &[
+    "cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "h", "ipp", "tpp", "inl", "c",
+];
 
 #[derive(Clone, Debug)]
 pub struct Meta {
@@ -40,6 +53,25 @@ pub fn list() -> Vec<(String, String)> {
     }
     if !BUILTIN_ODIN.is_empty() {
         map.insert("odin".into(), "builtin".into());
+    }
+    if !BUILTIN_GO.is_empty() {
+        map.insert("go".into(), "builtin".into());
+    }
+    if !BUILTIN_PHP.is_empty() {
+        map.insert("php".into(), "builtin".into());
+    }
+    if !BUILTIN_HTML.is_empty() {
+        map.insert("html".into(), "builtin".into());
+    }
+    if !BUILTIN_CPP.is_empty() {
+        for ext in CPP_EXTS {
+            map.insert((*ext).into(), "builtin".into());
+        }
+    }
+    if !BUILTIN_JS.is_empty() {
+        for ext in JS_EXTS {
+            map.insert((*ext).into(), "builtin".into());
+        }
     }
 
     if let Some(home) = dirs::home_dir() {
@@ -94,6 +126,21 @@ pub fn load(ext: &str) -> Option<Vec<u8>> {
     }
     if ext == "odin" && !BUILTIN_ODIN.is_empty() {
         return Some(BUILTIN_ODIN.to_vec());
+    }
+    if ext == "go" && !BUILTIN_GO.is_empty() {
+        return Some(BUILTIN_GO.to_vec());
+    }
+    if ext == "php" && !BUILTIN_PHP.is_empty() {
+        return Some(BUILTIN_PHP.to_vec());
+    }
+    if ext == "html" && !BUILTIN_HTML.is_empty() {
+        return Some(BUILTIN_HTML.to_vec());
+    }
+    if CPP_EXTS.contains(&ext) && !BUILTIN_CPP.is_empty() {
+        return Some(BUILTIN_CPP.to_vec());
+    }
+    if JS_EXTS.contains(&ext) && !BUILTIN_JS.is_empty() {
+        return Some(BUILTIN_JS.to_vec());
     }
 
     None

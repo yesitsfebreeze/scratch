@@ -8,10 +8,25 @@ fn main() {
     println!("cargo:rerun-if-changed=languages/py/Cargo.toml");
     println!("cargo:rerun-if-changed=languages/odin/src");
     println!("cargo:rerun-if-changed=languages/odin/Cargo.toml");
+    println!("cargo:rerun-if-changed=languages/go/src");
+    println!("cargo:rerun-if-changed=languages/go/Cargo.toml");
+    println!("cargo:rerun-if-changed=languages/php/src");
+    println!("cargo:rerun-if-changed=languages/php/Cargo.toml");
+    println!("cargo:rerun-if-changed=languages/html/src");
+    println!("cargo:rerun-if-changed=languages/html/Cargo.toml");
+    println!("cargo:rerun-if-changed=languages/cpp/src");
+    println!("cargo:rerun-if-changed=languages/cpp/Cargo.toml");
+    println!("cargo:rerun-if-changed=languages/js/src");
+    println!("cargo:rerun-if-changed=languages/js/Cargo.toml");
 
     build_language("rs", "split_language_rs");
     build_language("py", "split_language_py");
     build_language("odin", "split_language_odin");
+    build_language("go", "split_language_go");
+    build_language("php", "split_language_php");
+    build_language("html", "split_language_html");
+    build_language("cpp", "split_language_cpp");
+    build_language("js", "split_language_js");
 }
 
 fn build_language(lang: &str, crate_name: &str) {
